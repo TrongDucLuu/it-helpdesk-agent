@@ -1,6 +1,6 @@
 """
 Enterprise Knowledge Base Ingestion Package.
-Provides document parsers, chunking strategies, embedding generators, and BigQuery loaders.
+Provides document parsers, chunking strategies, Discovery Engine JSONL builders, GCS uploaders, and VAIS importers.
 """
 
 from scripts.ingest.parsers import DocumentParser, PARSER_VERSION
@@ -31,6 +31,16 @@ from scripts.ingest.loaders import (
     get_stale_chunks_for_reprocessing,
     run_test_query,
 )
+from scripts.ingest.jsonl_builder import (
+    build_document_records,
+    build_corpus_jsonl,
+)
+from scripts.ingest.gcs_uploader import (
+    upload_jsonl_to_gcs,
+)
+from scripts.ingest.vais_importer import (
+    import_documents_from_gcs,
+)
 
 __all__ = [
     "DocumentParser",
@@ -56,4 +66,8 @@ __all__ = [
     "purge_tombstoned_chunks",
     "get_stale_chunks_for_reprocessing",
     "run_test_query",
+    "build_document_records",
+    "build_corpus_jsonl",
+    "upload_jsonl_to_gcs",
+    "import_documents_from_gcs",
 ]

@@ -4,9 +4,12 @@ variable "project_id" {
 }
 
 variable "region" {
-  description = "The Google Cloud region to deploy to"
+  description = "The Google Cloud region to deploy to (e.g. asia-southeast1, us-central1, europe-west1, global). Required to ensure data residency compliance."
   type        = string
-  default     = "us-central1"
+  validation {
+    condition     = contains(["asia-southeast1", "asia-east1", "asia-northeast1", "us-central1", "us-east1", "us-west1", "europe-west1", "europe-west4", "global"], var.region)
+    error_message = "The region must be a valid Google Cloud region supported by Discovery Engine / Vertex AI Search (e.g. asia-southeast1, us-central1, europe-west1, global)."
+  }
 }
 
 variable "service_name" {
@@ -53,13 +56,61 @@ variable "allowed_domains" {
 }
 
 variable "knowledge_backend" {
-  description = "Knowledge base backend ('in_memory', 'bigquery')"
+  description = "Knowledge base backend ('vertex_ai_search', 'bigquery', 'in_memory')"
   type        = string
-  default     = "in_memory"
+  default     = "vertex_ai_search"
+  validation {
+    condition     = contains(["vertex_ai_search", "bigquery", "in_memory"], var.knowledge_backend)
+    error_message = "knowledge_backend must be one of: 'vertex_ai_search', 'bigquery', 'in_memory'."
+  }
 }
 
+# ==============================================================================
+# Vertex AI Search (Agent Search / Discovery Engine) Variables
+# ==============================================================================
+
+variable "vertex_search_data_store_id" {
+  description = "Data store ID for Discovery Engine / Vertex AI Search (e.g. it-helpdesk-kb)"
+  type        = string
+  default     = "it-helpdesk-kb"
+}
+
+variable "vertex_search_engine_id" {
+  description = "Search Engine / App ID for Discovery Engine (e.g. it-helpdesk-engine)"
+  type        = string
+  default     = "it-helpdesk-engine"
+}
+
+variable "acl_enabled" {
+  description = "IMMUTABLE — KHÔNG THỂ THAY ĐỔI SAU KHI TẠO. ĐỔI Ý NGHĨA LÀ PHẢI XOÁ DATA STORE VÀ RE-INDEX TOÀN BỘ CORPUS. Bật Document-level ACLs (Option B) hoặc dùng Metadata Filtering (Option A)."
+  type        = bool
+  default     = false
+}
+
+variable "enable_cmek" {
+  description = "Enable Customer-Managed Encryption Keys (CMEK) for enterprise banking/defense tier"
+  type        = bool
+  default     = false
+}
+
+variable "cmek_kms_key_name" {
+  description = "Cloud KMS Key Resource Name for CMEK encryption (required if enable_cmek is true)"
+  type        = string
+  default     = ""
+}
+
+variable "enable_vpc_sc" {
+  description = "Enable VPC Service Controls perimeter compatibility"
+  type        = bool
+  default     = false
+}
+
+# ==============================================================================
+# BigQuery & Legacy Backend Variables (Conditional via knowledge_backend)
+# ==============================================================================
+
 variable "bigquery_kb_dataset" {
-  description = "BigQuery dataset ID for storing knowledge articles and vector embeddings"
+  description = "BigQuery dataset ID for storing knowledge articles and vector embeddings (used only when knowledge_backend is 'bigquery')"
   type        = string
   default     = "it_helpdesk_kb"
 }
@@ -189,6 +240,3 @@ variable "telemetry_include_query" {
   type        = bool
   default     = false
 }
-
-
-

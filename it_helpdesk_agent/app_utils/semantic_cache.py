@@ -23,6 +23,17 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     return dot_product / (norm_a * norm_b)
 
 
+def compute_rbac_hash(allowed_systems: Optional[list[str]]) -> Optional[str]:
+    """
+    Computes a deterministic hash of authorized systems for RBAC-aware semantic caching (VAIS-053).
+    Returns None if allowed_systems is None (e.g. for purely public entries).
+    """
+    if allowed_systems is None:
+        return None
+    sorted_sys = sorted(list(set(s.upper().strip() for s in allowed_systems)))
+    return hashlib.sha256(",".join(sorted_sys).encode("utf-8")).hexdigest()[:16]
+
+
 @dataclass
 class SemanticCacheEntry:
     query: str
@@ -31,6 +42,7 @@ class SemanticCacheEntry:
     tier: str = "L1"
     user_id: Optional[str] = None
     is_public: bool = False
+    allowed_systems_hash: Optional[str] = None
     created_at: float = field(default_factory=time.time)
     expires_at: float = 0.0
     hit_count: int = 0
@@ -49,6 +61,7 @@ class SemanticCacheEntry:
             "tier": self.tier,
             "user_id": self.user_id,
             "is_public": self.is_public,
+            "allowed_systems_hash": self.allowed_systems_hash,
             "created_at": self.created_at,
             "expires_at": self.expires_at,
             "hit_count": self.hit_count,
@@ -64,6 +77,7 @@ class SemanticCacheEntry:
             tier=d.get("tier", "L1"),
             user_id=d.get("user_id"),
             is_public=bool(d.get("is_public", False)),
+            allowed_systems_hash=d.get("allowed_systems_hash"),
             created_at=float(d.get("created_at", time.time())),
             expires_at=float(d.get("expires_at", 0.0)),
             hit_count=int(d.get("hit_count", 0)),
@@ -114,6 +128,7 @@ class BaseSemanticCache(ABC):
         user_id: Optional[str] = None,
         similarity_threshold: Optional[float] = None,
         tier: Optional[str] = None,
+        allowed_systems: Optional[list[str]] = None,
     ) -> Optional[dict]:
         pass
 
@@ -127,6 +142,7 @@ class BaseSemanticCache(ABC):
         ttl_seconds: Optional[int] = None,
         tier: str = "L1",
         metadata: Optional[dict] = None,
+        allowed_systems: Optional[list[str]] = None,
     ) -> Any:
         pass
 
@@ -225,6 +241,7 @@ class InMemorySemanticCache(BaseSemanticCache):
         user_id: Optional[str] = None,
         similarity_threshold: Optional[float] = None,
         tier: Optional[str] = None,
+        allowed_systems: Optional[list[str]] = None,
     ) -> Optional[dict]:
         if not os.getenv("SEMANTIC_CACHE_ENABLED", "true").lower() in ("true", "1", "yes"):
             return None
@@ -238,6 +255,7 @@ class InMemorySemanticCache(BaseSemanticCache):
 
         self._entries = [e for e in self._entries if not e.is_expired()]
 
+        caller_rbac_hash = compute_rbac_hash(allowed_systems)
         best_match: Optional[SemanticCacheEntry] = None
         highest_sim = -1.0
 
@@ -245,6 +263,11 @@ class InMemorySemanticCache(BaseSemanticCache):
             can_access = entry.is_public or (user_id is not None and entry.user_id == user_id)
             if not can_access:
                 continue
+
+            # RBAC validation: if entry is tied to a specific RBAC hash, caller must match (VAIS-053)
+            if not entry.is_public and entry.allowed_systems_hash is not None:
+                if caller_rbac_hash != entry.allowed_systems_hash:
+                    continue
 
             sim = cosine_similarity(query_emb, entry.embedding)
             if sim > highest_sim:
@@ -276,19 +299,30 @@ class InMemorySemanticCache(BaseSemanticCache):
         ttl_seconds: Optional[int] = None,
         tier: str = "L1",
         metadata: Optional[dict] = None,
+        allowed_systems: Optional[list[str]] = None,
     ) -> Optional[SemanticCacheEntry]:
         query_emb = self._generate_embedding(query)
         if query_emb is None:
             logger.debug("Skipping semantic cache set: embedding is None (Fail-Closed mode).")
             return None
 
-        ttl = ttl_seconds if ttl_seconds is not None else self.default_ttl_seconds
+        # Tier-aware TTL: L2 default 1800s vs L1 default 86400s (VAIS-053)
+        if ttl_seconds is not None:
+            ttl = ttl_seconds
+        elif "L2" in tier.upper():
+            ttl = int(os.getenv("SEMANTIC_CACHE_TTL_L2", "1800"))
+        elif "L3" in tier.upper():
+            ttl = int(os.getenv("SEMANTIC_CACHE_TTL_L3", "300"))
+        else:
+            ttl = int(os.getenv("SEMANTIC_CACHE_TTL_L1", str(self.default_ttl_seconds)))
+
         expires_at = time.time() + ttl if ttl > 0 else 0.0
 
         if len(self._entries) >= self.max_size:
             self._entries.sort(key=lambda x: x.hit_count)
             self._entries.pop(0)
 
+        rbac_hash = compute_rbac_hash(allowed_systems) if not is_public else None
         entry = SemanticCacheEntry(
             query=query,
             embedding=query_emb,
@@ -296,6 +330,7 @@ class InMemorySemanticCache(BaseSemanticCache):
             tier=tier,
             user_id=user_id,
             is_public=is_public,
+            allowed_systems_hash=rbac_hash,
             created_at=time.time(),
             expires_at=expires_at,
             hit_count=0,
@@ -508,6 +543,7 @@ class RedisSemanticCache(BaseSemanticCache):
         user_id: Optional[str] = None,
         similarity_threshold: Optional[float] = None,
         tier: Optional[str] = None,
+        allowed_systems: Optional[list[str]] = None,
     ) -> Optional[dict]:
         """
         Retrieves cached response from Redis with vector cosine similarity.
@@ -531,6 +567,8 @@ class RedisSemanticCache(BaseSemanticCache):
             self._init_redis()
             if self._redis is None:
                 return None
+
+        caller_rbac_hash = compute_rbac_hash(allowed_systems)
 
         # Multi-tenant Candidate-Set Scan with Vector Cosine Similarity
         try:
@@ -569,6 +607,11 @@ class RedisSemanticCache(BaseSemanticCache):
                     can_access = entry.is_public or (user_id is not None and entry.user_id == user_id)
                     if not can_access:
                         continue
+
+                    # RBAC validation: if restricted entry has allowed_systems_hash, must match caller (VAIS-053)
+                    if not entry.is_public and entry.allowed_systems_hash is not None:
+                        if caller_rbac_hash != entry.allowed_systems_hash:
+                            continue
 
                     sim = cosine_similarity(query_emb, entry.embedding)
                     if sim > highest_sim:
@@ -634,6 +677,7 @@ class RedisSemanticCache(BaseSemanticCache):
         ttl_seconds: Optional[int] = None,
         tier: str = "L1",
         metadata: Optional[dict] = None,
+        allowed_systems: Optional[list[str]] = None,
     ) -> Optional[SemanticCacheEntry]:
         """
         Persists query, embedding, and response into Redis with TTL.
@@ -653,9 +697,19 @@ class RedisSemanticCache(BaseSemanticCache):
             if self._redis is None:
                 return None
 
-        ttl = ttl_seconds if ttl_seconds is not None else self.default_ttl_seconds
+        # Tier-aware TTL: L2 default 1800s vs L1 default 86400s (VAIS-053)
+        if ttl_seconds is not None:
+            ttl = ttl_seconds
+        elif "L2" in tier.upper():
+            ttl = int(os.getenv("SEMANTIC_CACHE_TTL_L2", "1800"))
+        elif "L3" in tier.upper():
+            ttl = int(os.getenv("SEMANTIC_CACHE_TTL_L3", "300"))
+        else:
+            ttl = int(os.getenv("SEMANTIC_CACHE_TTL_L1", str(self.default_ttl_seconds)))
+
         expires_at = time.time() + ttl if ttl > 0 else 0.0
 
+        rbac_hash = compute_rbac_hash(allowed_systems) if not is_public else None
         entry = SemanticCacheEntry(
             query=query,
             embedding=query_emb,
@@ -663,6 +717,7 @@ class RedisSemanticCache(BaseSemanticCache):
             tier=tier,
             user_id=user_id,
             is_public=is_public,
+            allowed_systems_hash=rbac_hash,
             created_at=time.time(),
             expires_at=expires_at,
             hit_count=0,

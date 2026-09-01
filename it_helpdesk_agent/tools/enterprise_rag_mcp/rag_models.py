@@ -36,6 +36,9 @@ class KnowledgeArticle(BaseModel):
     expiry_date: Optional[str] = None
     is_deleted: bool = False
     deleted_at: Optional[str] = None
+    chunk_id: Optional[str] = None
+    parent_doc_id: Optional[str] = None
+    chunk_index: Optional[int] = 0
 
     @field_validator("system")
     @classmethod
@@ -63,6 +66,14 @@ class SearchResult(BaseModel):
     expiry_date: Optional[str] = None
     is_deleted: bool = False
     is_truncated: bool = False
+    chunk_id: Optional[str] = None
+    parent_doc_id: Optional[str] = None
+
+    @field_validator("relevance_score")
+    @classmethod
+    def validate_relevance_score(cls, v: float) -> float:
+        clamped = round(max(0.0, min(1.0, float(v))), 4)
+        return clamped
 
     @field_validator("system")
     @classmethod

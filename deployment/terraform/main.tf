@@ -6,6 +6,7 @@ resource "google_project_service" "services" {
     "artifactregistry.googleapis.com",
     "cloudbuild.googleapis.com",
     "aiplatform.googleapis.com",
+    "discoveryengine.googleapis.com",
     "secretmanager.googleapis.com",
     "logging.googleapis.com",
     "bigquery.googleapis.com",
@@ -43,6 +44,7 @@ resource "google_project_iam_member" "vertex_ai_user" {
 }
 
 resource "google_project_iam_member" "bigquery_job_user" {
+  count   = var.knowledge_backend == "bigquery" ? 1 : 0
   project = var.project_id
   role    = "roles/bigquery.jobUser"
   member  = "serviceAccount:${google_service_account.agent_sa.email}"
@@ -68,8 +70,9 @@ resource "google_storage_bucket_iam_member" "ai_assets_storage_user" {
   member = "serviceAccount:${google_service_account.agent_sa.email}"
 }
 
-# 5. BigQuery Dataset & Vector Table for Enterprise Knowledge Base
+# 5. BigQuery Dataset & Vector Table for Enterprise Knowledge Base (Conditional for BigQuery backend)
 resource "google_bigquery_dataset" "kb_dataset" {
+  count                      = var.knowledge_backend == "bigquery" ? 1 : 0
   project                    = var.project_id
   dataset_id                 = var.bigquery_kb_dataset
   friendly_name              = "IT Helpdesk Enterprise Knowledge Base"
@@ -80,8 +83,9 @@ resource "google_bigquery_dataset" "kb_dataset" {
 }
 
 resource "google_bigquery_table" "knowledge_articles" {
+  count               = var.knowledge_backend == "bigquery" ? 1 : 0
   project             = var.project_id
-  dataset_id          = google_bigquery_dataset.kb_dataset.dataset_id
+  dataset_id          = google_bigquery_dataset.kb_dataset[0].dataset_id
   table_id            = "knowledge_articles"
   friendly_name       = "Enterprise Knowledge Articles"
   description         = "Knowledge base articles with 768-dimensional text-embedding-005 vectors for enterprise semantic search"
@@ -238,8 +242,9 @@ EOF
 }
 
 resource "google_bigquery_table" "ingestion_dead_letter_queue" {
+  count               = var.knowledge_backend == "bigquery" ? 1 : 0
   project             = var.project_id
-  dataset_id          = google_bigquery_dataset.kb_dataset.dataset_id
+  dataset_id          = google_bigquery_dataset.kb_dataset[0].dataset_id
   table_id            = "ingestion_dead_letter_queue"
   friendly_name       = "Knowledge Ingestion Dead Letter Queue"
   description         = "Persistent DLQ table storing unparseable or failed documents with error tracebacks"
@@ -297,12 +302,26 @@ EOF
   depends_on = [google_bigquery_dataset.kb_dataset]
 }
 
-# Scope BigQuery read-only access strictly to the KB dataset (Least Privilege)
+# Scope BigQuery read-only access strictly to the KB dataset (Least Privilege, Conditional)
 resource "google_bigquery_dataset_iam_member" "kb_dataset_viewer" {
+  count      = var.knowledge_backend == "bigquery" ? 1 : 0
   project    = var.project_id
-  dataset_id = google_bigquery_dataset.kb_dataset.dataset_id
+  dataset_id = google_bigquery_dataset.kb_dataset[0].dataset_id
   role       = "roles/bigquery.dataViewer"
   member     = "serviceAccount:${google_service_account.agent_sa.email}"
+}
+
+# Audit Logging for Discovery Engine / Vertex AI Search (Compliance & Forensics - VAIS-044)
+resource "google_project_iam_audit_config" "discovery_engine_audit" {
+  project = var.project_id
+  service = "discoveryengine.googleapis.com"
+
+  audit_log_config {
+    log_type = "DATA_READ"
+  }
+  audit_log_config {
+    log_type = "DATA_WRITE"
+  }
 }
 
 # 6. Firestore Database for Persistent Helpdesk Ticketing
@@ -402,6 +421,22 @@ resource "google_cloud_run_v2_service" "default" {
       env {
         name  = "KNOWLEDGE_BACKEND"
         value = var.knowledge_backend
+      }
+      env {
+        name  = "VERTEX_SEARCH_LOCATION"
+        value = var.region
+      }
+      env {
+        name  = "VERTEX_SEARCH_DATA_STORE_ID"
+        value = var.vertex_search_data_store_id
+      }
+      env {
+        name  = "VERTEX_SEARCH_ENGINE_ID"
+        value = var.vertex_search_engine_id
+      }
+      env {
+        name  = "KB_CORPUS_GCS_BUCKET"
+        value = google_storage_bucket.kb_corpus_bucket.name
       }
       env {
         name  = "BIGQUERY_KB_DATASET"

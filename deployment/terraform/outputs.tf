@@ -13,9 +13,24 @@ output "artifact_registry_repository" {
   value       = google_artifact_registry_repository.repo.id
 }
 
+output "vertex_search_data_store_id" {
+  description = "Discovery Engine / Vertex AI Search Data Store ID"
+  value       = google_discovery_engine_data_store.kb_store.data_store_id
+}
+
+output "vertex_search_engine_id" {
+  description = "Discovery Engine Search Engine (App) ID"
+  value       = google_discovery_engine_search_engine.kb_search_engine.engine_id
+}
+
+output "kb_corpus_bucket_name" {
+  description = "GCS Bucket for Knowledge Base JSONL Corpus Stage"
+  value       = google_storage_bucket.kb_corpus_bucket.name
+}
+
 output "bigquery_kb_dataset" {
-  description = "BigQuery dataset for Enterprise Knowledge Base"
-  value       = google_bigquery_dataset.kb_dataset.dataset_id
+  description = "BigQuery dataset for Enterprise Knowledge Base (null if not using bigquery backend)"
+  value       = try(google_bigquery_dataset.kb_dataset[0].dataset_id, null)
 }
 
 output "firestore_database_name" {

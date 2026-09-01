@@ -159,3 +159,93 @@ def test_dlq_schema_parity_mutation_detection():
     tf_schema = extract_terraform_dlq_schema()
     mutated_tf = [f for f in tf_schema if f["name"] != "doc_payload"]
     assert len(mutated_tf) != len(get_dlq_schema()), "Mutation should alter DLQ schema length"
+
+
+def test_search_result_contract_parity_across_backends():
+    """
+    Verifies that SearchResult contract is strictly respected across all backends:
+    - Exactly the same fields and types (including chunk_id, parent_doc_id).
+    - relevance_score is bounded to [0.0, 1.0].
+    """
+    from it_helpdesk_agent.tools.enterprise_rag_mcp.knowledge_store import (
+        InMemoryKnowledgeStore,
+        BigQueryVectorKnowledgeStore,
+    )
+    from it_helpdesk_agent.tools.enterprise_rag_mcp.rag_models import SearchResult
+    from unittest.mock import MagicMock
+
+    # 1. InMemory Store Search
+    in_mem_store = InMemoryKnowledgeStore()
+    in_mem_results = in_mem_store.search("SAP Purchase Order", system="ERP", limit=3)
+    assert len(in_mem_results) > 0
+
+    for r in in_mem_results:
+        assert isinstance(r, SearchResult)
+        assert 0.0 <= r.relevance_score <= 1.0
+        assert hasattr(r, "chunk_id")
+        assert hasattr(r, "parent_doc_id")
+        assert r.system == "ERP"
+
+    # 2. BigQuery Store Search (Mocked Client)
+    mock_bq_client = MagicMock()
+    mock_row = MagicMock()
+    mock_row.id = "ERP-KB-001"
+    mock_row.system = "ERP"
+    mock_row.title = "Test BQ Title"
+    mock_row.content = "Test BQ Content for ERP"
+    mock_row.distance = 0.25
+    mock_row.hybrid_score = 4.5  # Exceeds 1.0 to test clamping / normalization
+    mock_row.source_uri = "docs/test.md"
+    mock_row.category = "Test"
+    mock_row.keywords = ["erp", "sap"]
+    mock_row.owner = "admin@company.com"
+    mock_row.effective_date = "2025-01-01"
+    mock_row.expiry_date = None
+    mock_row.is_deleted = False
+    mock_row.chunk_id = "chunk-001"
+    mock_row.parent_doc_id = "doc-001"
+    mock_row.section_hierarchy = {"h1": "H1", "h2": "H2", "h3": "H3"}
+
+    mock_query_job = MagicMock()
+    mock_query_job.result.return_value = [mock_row]
+    mock_bq_client.query.return_value = mock_query_job
+
+    bq_store = BigQueryVectorKnowledgeStore(
+        project_id="test-proj",
+        dataset_id="test_ds",
+        bq_client=mock_bq_client,
+        embedding_fn=lambda x: [0.1] * 64
+    )
+    bq_results = bq_store.search("test query", system="ERP", limit=1)
+    assert len(bq_results) == 1
+    bq_r = bq_results[0]
+    assert isinstance(bq_r, SearchResult)
+    assert 0.0 <= bq_r.relevance_score <= 1.0
+    assert bq_r.chunk_id == "chunk-001"
+    assert bq_r.parent_doc_id == "doc-001"
+    assert bq_r.section_hierarchy.h1 == "H1"
+    assert bq_r.relevance_score <= 1.0
+
+
+def test_search_result_relevance_score_clamping():
+    """Verifies that SearchResult validator clamps relevance_score to [0.0, 1.0]."""
+    from it_helpdesk_agent.tools.enterprise_rag_mcp.rag_models import SearchResult
+
+    res_high = SearchResult(
+        article_id="TEST-001",
+        system="ERP",
+        title="Test",
+        snippet="Snippet",
+        relevance_score=3.5,
+    )
+    assert res_high.relevance_score == 1.0
+
+    res_low = SearchResult(
+        article_id="TEST-002",
+        system="ERP",
+        title="Test",
+        snippet="Snippet",
+        relevance_score=-0.8,
+    )
+    assert res_low.relevance_score == 0.0
+

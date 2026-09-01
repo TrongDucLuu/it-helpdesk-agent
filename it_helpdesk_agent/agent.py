@@ -13,7 +13,11 @@ from it_helpdesk_agent.app_utils.semantic_cache import get_semantic_cache
 from it_helpdesk_agent.app_utils.rate_limiter import check_l3_rate_limit
 from it_helpdesk_agent.app_utils.sso_auth import current_sso_user
 from it_helpdesk_agent.app_utils.telemetry import ProductMetricsCollector
-from it_helpdesk_agent.tools.mcp_config import get_enterprise_rag_mcp_toolset
+from it_helpdesk_agent.tools.enterprise_rag import (
+    search_enterprise_knowledge,
+    get_system_manual,
+    draft_email_response,
+)
 from it_helpdesk_agent.tools.ticketing_tool import (
     create_helpdesk_ticket,
     get_ticket_details,
@@ -125,8 +129,16 @@ async def semantic_cache_before_model_callback(
     if not query_text or len(query_text) < 3:
         return None
 
+    from it_helpdesk_agent.tools.enterprise_rag.rag_tools import _get_authorized_systems
+    auth_systems = _get_authorized_systems() if user else []
+
     cache = get_semantic_cache()
-    cached = cache.get(query=query_text, user_id=user_id, tier=agent_name)
+    cached = cache.get(
+        query=query_text,
+        user_id=user_id,
+        tier=agent_name,
+        allowed_systems=auth_systems,
+    )
     if cached:
         # Record cache hit in product metrics telemetry with actual cache lookup latency
         hit_latency_ms = round((time.perf_counter() - start_t) * 1000.0, 2)
@@ -325,19 +337,20 @@ async def semantic_cache_after_model_callback(
 
         # Classify if public FAQ or user-specific private query
         is_safe_public = _is_safe_public_faq(user_query, agent_name, tools_called)
+        from it_helpdesk_agent.tools.enterprise_rag.rag_tools import _get_authorized_systems
+        auth_systems = _get_authorized_systems() if user else []
+
         cache = get_semantic_cache()
         cache.set(
             query=user_query,
             response=response_text,
             user_id=None if is_safe_public else user.user_id,
             is_public=is_safe_public,
-            tier=agent_name
+            tier=agent_name,
+            allowed_systems=auth_systems if not is_safe_public else None,
         )
 
     return modified_response
-
-# Singleton Toolsets
-rag_mcp = get_enterprise_rag_mcp_toolset()
 
 # Shared Unified Prompt Injection Defense Directive
 INDIRECT_PROMPT_INJECTION_DEFENSE_INSTRUCTION = """
@@ -416,10 +429,13 @@ l2_enterprise_rag_agent = Agent(
     4. {INDIRECT_PROMPT_INJECTION_DEFENSE_INSTRUCTION.strip()}
     """,
     tools=[
-        rag_mcp,
+        search_enterprise_knowledge,
+        get_system_manual,
+        draft_email_response,
         update_ticket_status,
         route_ticket_to_tier,
         get_ticket_details,
+        create_helpdesk_ticket,
     ],
     disallow_transfer_to_peers=True,
     before_model_callback=semantic_cache_before_model_callback,

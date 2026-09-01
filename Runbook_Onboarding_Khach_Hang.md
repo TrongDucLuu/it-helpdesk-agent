@@ -28,6 +28,24 @@ Hệ thống `it-helpdesk-agent` được thiết kế theo kiến trúc **Confi
 
 ## 2. Quy Trình Onboarding Khách Hàng Mới (Step-by-Step)
 
+### Bước 0: Khảo Sát & Xác Định Vùng Lưu Trữ Dữ Liệu (Data Residency & Compliance) [BẮT BUỘC]
+
+Trước khi khởi tạo hạ tầng Terraform hoặc đưa dữ liệu tri thức doanh nghiệp vào hệ thống, Solutions Architect và DevOps Engineer **bắt buộc** phải khảo sát và chốt các tiêu chí Data Residency & Governance:
+
+1. **Tuân thủ Pháp lý & Quy định Dữ liệu (Compliance & Localization)**:
+   - Doanh nghiệp Việt Nam chịu sự điều chỉnh của **Nghị định 13/2023/NĐ-CP** (Bảo vệ Dữ liệu Cá nhân), Thông tư 09/2020/TT-NHNN (Ngân hàng Nhà nước), và các quy định an toàn thông tin Y tế / Quốc phòng.
+   - **Lựa chọn Region trong Terraform (`var.region`)**:
+     - Doanh nghiệp Việt Nam / Đông Nam Á: Chọn `asia-southeast1` (Singapore - độ trễ thấp nhất ~30-40ms, lưu trữ dữ liệu tại APAC).
+     - Doanh nghiệp Bắc Mỹ: Chọn `us-central1` hoặc `us-east1`.
+     - Doanh nghiệp Châu Âu (GDPR): Chọn `europe-west1` (Bỉ) hoặc `europe-west4` (Hà Lan).
+   - **Ràng buộc Terraform**: Biến `region` **không có giá trị mặc định**. Quá trình provisioning sẽ fail-closed nếu không chỉ định rõ vùng triển khai.
+
+2. **Quyết định Chiến lược Phân quyền Knowledge Base (`acl_enabled`)**:
+   - **CẢNH BÁO IMMUTABLE**: Thuộc tính `acl_enabled` trên Discovery Engine Data Store **không thể thay đổi sau khi tạo**. Nếu muốn đổi giữa Option A (Metadata Filter) và Option B (Document-Level ACLs), bắt buộc phải huỷ toàn bộ Data Store và nạp lại toàn bộ Corpus.
+   - Hầu hết khách hàng Enterprise sử dụng **Option A (`acl_enabled = false`)** kết hợp với hệ thống lọc bảo mật động tại server (`build_system_filter`).
+
+---
+
 ### Bước 1: Khai báo Danh mục Hệ thống & Phân quyền RBAC
 
 Chỉnh sửa tệp `config/systems.yaml` để định nghĩa các hệ thống mục tiêu của khách hàng:

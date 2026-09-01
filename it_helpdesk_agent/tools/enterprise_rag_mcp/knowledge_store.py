@@ -743,7 +743,7 @@ class InMemoryKnowledgeStore(BaseKnowledgeStore):
                 system=article.system,
                 title=article.title,
             )
-            relevance = min(1.0, score / 6.0)
+            relevance = max(0.0, min(1.0, score / 6.0))
             sec_hier = article.section_hierarchy
             context_path = sec_hier.format_path() if sec_hier else f"{article.system} > {article.category} > {article.title}"
             search_results.append(SearchResult(
@@ -762,15 +762,82 @@ class InMemoryKnowledgeStore(BaseKnowledgeStore):
                 expiry_date=article.expiry_date,
                 is_deleted=getattr(article, "is_deleted", False),
                 is_truncated=is_truncated,
+                chunk_id=getattr(article, "chunk_id", None),
+                parent_doc_id=getattr(article, "parent_doc_id", None),
             ))
         return search_results
 
     def get_article_by_id(self, article_id: str) -> Optional[KnowledgeArticle]:
-        """Retrieves an article by its unique ID."""
+        """
+        Retrieves an article by its unique ID.
+        If the article consists of multiple chunks (or queried via parent_doc_id/chunk_id),
+        aggregates and sorts all chunks by chunk_index to return the complete document (VAIS-051).
+        """
+        if not article_id or not article_id.strip():
+            return None
+
+        clean_id = article_id.strip().upper()
+        
+        # 1. Look for direct match or parent_doc_id match
+        matched_chunks = []
+        target_parent_id = None
+
         for article in self.articles:
-            if article.id.upper() == article_id.upper():
-                return article
-        return None
+            art_id = article.id.upper()
+            art_parent = (getattr(article, "parent_doc_id", None) or "").upper()
+            if art_id == clean_id:
+                target_parent_id = art_parent or art_id
+                break
+            elif art_parent == clean_id:
+                target_parent_id = clean_id
+                break
+
+        if not target_parent_id:
+            return None
+
+        # 2. Collect all chunks belonging to the same parent document
+        for article in self.articles:
+            art_id = article.id.upper()
+            art_parent = (getattr(article, "parent_doc_id", None) or "").upper()
+            if art_parent == target_parent_id or (not art_parent and art_id == target_parent_id):
+                matched_chunks.append(article)
+
+        if not matched_chunks:
+            return None
+
+        if len(matched_chunks) == 1:
+            return matched_chunks[0]
+
+        # 3. Sort chunks by chunk_index and assemble complete content
+        matched_chunks.sort(key=lambda a: getattr(a, "chunk_index", 0))
+        first = matched_chunks[0]
+        merged_content = "\n\n".join(c.content.strip() for c in matched_chunks if c.content)
+
+        return KnowledgeArticle(
+            id=first.parent_doc_id or first.id,
+            system=first.system,
+            title=first.title,
+            category=first.category,
+            content=merged_content,
+            keywords=first.keywords,
+            section_hierarchy=first.section_hierarchy,
+            source_uri=first.source_uri,
+            owner=first.owner,
+            effective_date=first.effective_date,
+            expiry_date=first.expiry_date,
+            is_deleted=getattr(first, "is_deleted", False),
+            deleted_at=getattr(first, "deleted_at", None),
+            chunk_id=None,
+            parent_doc_id=first.parent_doc_id,
+        )
+
+    def clear(self) -> None:
+        """Clears all stored articles in memory."""
+        self.articles = []
+
+    def add_article(self, article: KnowledgeArticle) -> None:
+        """Appends a new article or chunk to the memory store."""
+        self.articles.append(article)
 
 
 class BigQueryVectorKnowledgeStore(BaseKnowledgeStore):
@@ -945,46 +1012,56 @@ class BigQueryVectorKnowledgeStore(BaseKnowledgeStore):
             query_job = self.bq_client.query(sql, job_config=job_config)
             rows = query_job.result(timeout=bq_timeout)
 
+            def _safe_str(val: Any, default: Optional[str] = None) -> Optional[str]:
+                if val is None or not isinstance(val, (str, bytes)):
+                    return default
+                if isinstance(val, bytes):
+                    return val.decode("utf-8", errors="ignore")
+                return val
+
+            def _safe_bool(val: Any) -> bool:
+                return val is True
+
+            def _safe_float(val: Any, default: float = 0.0) -> float:
+                if isinstance(val, (int, float)) and not isinstance(val, bool):
+                    return float(val)
+                return default
+
             results = []
             for row in rows:
-                content_str = str(row.content) if not hasattr(row.content, "_mock_return_value") else ""
+                raw_content = getattr(row, "content", None)
+                content_str = _safe_str(raw_content, default="") or ""
                 snippet = content_str[:200].strip() + "..."
                 hybrid_val = getattr(row, "hybrid_score", None)
-                if hybrid_val is not None and not hasattr(hybrid_val, "_mock_return_value") and isinstance(hybrid_val, (int, float)):
-                    relevance = round(max(0.0, float(hybrid_val)), 2)
+                if hybrid_val is not None and isinstance(hybrid_val, (int, float)) and not isinstance(hybrid_val, bool):
+                    val_float = float(hybrid_val)
+                    if val_float > 1.0:
+                        relevance = round(max(0.0, min(1.0, val_float / 6.0)), 2)
+                    else:
+                        relevance = round(max(0.0, min(1.0, val_float)), 2)
                 else:
-                    dist_val = getattr(row, "distance", 0.0)
-                    relevance = round(max(0.0, 1.0 - (float(dist_val) if isinstance(dist_val, (int, float)) else 0.0)), 2)
+                    dist_val = _safe_float(getattr(row, "distance", 0.0), default=0.0)
+                    relevance = round(max(0.0, min(1.0, 1.0 - dist_val)), 2)
                 
                 sec_hier = None
                 context_path = None
                 raw_hier = getattr(row, "section_hierarchy", None)
-                if raw_hier and not hasattr(raw_hier, "_mock_return_value"):
-                    hier_dict = dict(raw_hier) if hasattr(raw_hier, "items") else raw_hier
-                    if isinstance(hier_dict, dict):
+                if raw_hier:
+                    hier_dict = dict(raw_hier) if hasattr(raw_hier, "items") else (raw_hier if isinstance(raw_hier, dict) else None)
+                    if hier_dict:
                         sec_hier = SectionHierarchy(
-                            h1=str(hier_dict["h1"]) if hier_dict.get("h1") and not hasattr(hier_dict["h1"], "_mock_return_value") else None,
-                            h2=str(hier_dict["h2"]) if hier_dict.get("h2") and not hasattr(hier_dict["h2"], "_mock_return_value") else None,
-                            h3=str(hier_dict["h3"]) if hier_dict.get("h3") and not hasattr(hier_dict["h3"], "_mock_return_value") else None,
+                            h1=_safe_str(hier_dict.get("h1")),
+                            h2=_safe_str(hier_dict.get("h2")),
+                            h3=_safe_str(hier_dict.get("h3")),
                         )
                         context_path = sec_hier.format_path()
 
                 raw_keywords = getattr(row, "keywords", None)
-                kw_list = list(raw_keywords) if raw_keywords and not hasattr(raw_keywords, "_mock_return_value") else []
+                kw_list = [str(k) for k in raw_keywords if isinstance(k, (str, bytes))] if isinstance(raw_keywords, (list, tuple, set)) else []
 
-                def _extract_str(val: Any) -> Optional[str]:
-                    if val is None or hasattr(val, "_mock_return_value"):
-                        return None
-                    return str(val)
-
-                def _extract_bool(val: Any) -> bool:
-                    if isinstance(val, bool):
-                        return val
-                    return False
-
-                art_id = _extract_str(row.id) or str(row.id)
-                art_sys = _extract_str(row.system) or str(row.system)
-                art_title = _extract_str(row.title) or str(row.title)
+                art_id = _safe_str(getattr(row, "id", None), default="UNKNOWN") or "UNKNOWN"
+                art_sys = _safe_str(getattr(row, "system", None), default="UNKNOWN") or "UNKNOWN"
+                art_title = _safe_str(getattr(row, "title", None), default="") or ""
                 is_truncated = len(content_str) > 200
                 raw_snippet = content_str[:200].strip() + "..." if is_truncated else content_str.strip()
                 snippet = wrap_retrieved_document(
@@ -1002,14 +1079,16 @@ class BigQueryVectorKnowledgeStore(BaseKnowledgeStore):
                     relevance_score=relevance,
                     section_hierarchy=sec_hier,
                     context_path=context_path,
-                    source_uri=_extract_str(getattr(row, "source_uri", None)),
-                    category=_extract_str(getattr(row, "category", None)),
+                    source_uri=_safe_str(getattr(row, "source_uri", None)),
+                    category=_safe_str(getattr(row, "category", None)),
                     keywords=kw_list,
-                    owner=_extract_str(getattr(row, "owner", None)),
-                    effective_date=_extract_str(getattr(row, "effective_date", None)),
-                    expiry_date=_extract_str(getattr(row, "expiry_date", None)),
-                    is_deleted=_extract_bool(getattr(row, "is_deleted", False)),
+                    owner=_safe_str(getattr(row, "owner", None)),
+                    effective_date=_safe_str(getattr(row, "effective_date", None)),
+                    expiry_date=_safe_str(getattr(row, "expiry_date", None)),
+                    is_deleted=_safe_bool(getattr(row, "is_deleted", False)),
                     is_truncated=is_truncated,
+                    chunk_id=_safe_str(getattr(row, "chunk_id", None)),
+                    parent_doc_id=_safe_str(getattr(row, "parent_doc_id", None)),
                 ))
             return results
         except Exception as e:
@@ -1039,44 +1118,44 @@ class BigQueryVectorKnowledgeStore(BaseKnowledgeStore):
             rows = list(self.bq_client.query(sql, job_config=job_config).result(timeout=bq_timeout))
             if rows:
                 r = rows[0]
+                def _safe_str(val: Any, default: Optional[str] = None) -> Optional[str]:
+                    if val is None or not isinstance(val, (str, bytes)):
+                        return default
+                    if isinstance(val, bytes):
+                        return val.decode("utf-8", errors="ignore")
+                    return val
+
+                def _safe_bool(val: Any) -> bool:
+                    return val is True
+
                 sec_hier = None
                 raw_hier = getattr(r, "section_hierarchy", None)
-                if raw_hier and not hasattr(raw_hier, "_mock_return_value"):
-                    hier_dict = dict(raw_hier) if hasattr(raw_hier, "items") else raw_hier
-                    if isinstance(hier_dict, dict):
+                if raw_hier:
+                    hier_dict = dict(raw_hier) if hasattr(raw_hier, "items") else (raw_hier if isinstance(raw_hier, dict) else None)
+                    if hier_dict:
                         sec_hier = SectionHierarchy(
-                            h1=str(hier_dict["h1"]) if hier_dict.get("h1") and not hasattr(hier_dict["h1"], "_mock_return_value") else None,
-                            h2=str(hier_dict["h2"]) if hier_dict.get("h2") and not hasattr(hier_dict["h2"], "_mock_return_value") else None,
-                            h3=str(hier_dict["h3"]) if hier_dict.get("h3") and not hasattr(hier_dict["h3"], "_mock_return_value") else None,
+                            h1=_safe_str(hier_dict.get("h1")),
+                            h2=_safe_str(hier_dict.get("h2")),
+                            h3=_safe_str(hier_dict.get("h3")),
                         )
 
-                def _extract_str(val: Any) -> Optional[str]:
-                    if val is None or hasattr(val, "_mock_return_value"):
-                        return None
-                    return str(val)
-
-                def _extract_bool(val: Any) -> bool:
-                    if isinstance(val, bool):
-                        return val
-                    return False
-
                 raw_keywords = getattr(r, "keywords", None)
-                kw_list = list(raw_keywords) if raw_keywords and not hasattr(raw_keywords, "_mock_return_value") else []
+                kw_list = [str(k) for k in raw_keywords if isinstance(k, (str, bytes))] if isinstance(raw_keywords, (list, tuple, set)) else []
 
                 return KnowledgeArticle(
-                    id=_extract_str(r.id) or str(r.id),
-                    system=_extract_str(r.system) or str(r.system),
-                    title=_extract_str(r.title) or str(r.title),
-                    category=_extract_str(r.category) or "General",
-                    content=_extract_str(r.content) or "",
+                    id=_safe_str(getattr(r, "id", None), default="UNKNOWN") or "UNKNOWN",
+                    system=_safe_str(getattr(r, "system", None), default="UNKNOWN") or "UNKNOWN",
+                    title=_safe_str(getattr(r, "title", None), default="") or "",
+                    category=_safe_str(getattr(r, "category", None), default="General") or "General",
+                    content=_safe_str(getattr(r, "content", None), default="") or "",
                     keywords=kw_list,
                     section_hierarchy=sec_hier,
-                    source_uri=_extract_str(getattr(r, "source_uri", None)),
-                    owner=_extract_str(getattr(r, "owner", None)),
-                    effective_date=_extract_str(getattr(r, "effective_date", None)),
-                    expiry_date=_extract_str(getattr(r, "expiry_date", None)),
-                    is_deleted=_extract_bool(getattr(r, "is_deleted", False)),
-                    deleted_at=_extract_str(getattr(r, "deleted_at", None)),
+                    source_uri=_safe_str(getattr(r, "source_uri", None)),
+                    owner=_safe_str(getattr(r, "owner", None)),
+                    effective_date=_safe_str(getattr(r, "effective_date", None)),
+                    expiry_date=_safe_str(getattr(r, "expiry_date", None)),
+                    is_deleted=_safe_bool(getattr(r, "is_deleted", False)),
+                    deleted_at=_safe_str(getattr(r, "deleted_at", None)),
                 )
             return None
         except Exception as e:
@@ -1084,18 +1163,42 @@ class BigQueryVectorKnowledgeStore(BaseKnowledgeStore):
             raise KnowledgeStoreUnavailableError(f"Truy xuất bài viết BigQuery thất bại: {e}") from e
 
 
-def get_knowledge_store() -> BaseKnowledgeStore:
+def get_knowledge_store(backend: Optional[str] = None) -> BaseKnowledgeStore:
     """
-    Factory to retrieve the appropriate Knowledge Store backend based on environment configuration.
+    Factory to retrieve the appropriate Knowledge Store backend based on explicit argument or environment configuration.
+    
     Supported backends:
-      - 'in_memory' / 'mock' (default): In-memory keyword store for local dev & unit tests.
-      - 'bigquery': BigQuery serverless vector search for cost-effective production scaling.
+      - 'in_memory' (default): In-memory keyword store for local dev & unit tests.
+      - 'bigquery': BigQuery serverless vector search.
+      - 'vertex_ai_search' / 'agent_search' / 'discovery_engine': Vertex AI Search (Agent Search) adapter.
+
+    Fail-Closed Policy:
+      - If an unknown or unsupported backend is specified, raises ValueError immediately without silent fallback.
     """
-    backend = os.getenv("KNOWLEDGE_BACKEND", "in_memory").lower()
-    if backend == "bigquery":
+    raw_backend = backend or os.getenv("KNOWLEDGE_STORE_BACKEND") or os.getenv("KNOWLEDGE_BACKEND", "in_memory")
+    effective_backend = raw_backend.strip().lower()
+
+    if effective_backend in ("in_memory", "mock", "local"):
+        return InMemoryKnowledgeStore()
+    elif effective_backend == "bigquery":
         return BigQueryVectorKnowledgeStore()
-    return InMemoryKnowledgeStore()
+    elif effective_backend in ("vertex_ai_search", "agent_search", "discovery_engine"):
+        try:
+            from it_helpdesk_agent.tools.enterprise_rag.vertex_search_store import VertexAiSearchKnowledgeStore
+        except ImportError:
+            try:
+                from tools.enterprise_rag.vertex_search_store import VertexAiSearchKnowledgeStore
+            except ImportError:
+                from enterprise_rag.vertex_search_store import VertexAiSearchKnowledgeStore
+        return VertexAiSearchKnowledgeStore()
+    else:
+        raise ValueError(
+            f"Knowledge store backend không hợp lệ: '{effective_backend}'. "
+            f"Các backend được hỗ trợ: ['in_memory', 'bigquery', 'vertex_ai_search', 'agent_search']. "
+            f"Tuyệt đối không tự ý fallback về in_memory (Fail-Closed)."
+        )
 
 
 # Backward compatibility alias
 KnowledgeStore = InMemoryKnowledgeStore
+
