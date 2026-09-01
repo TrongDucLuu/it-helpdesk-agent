@@ -1,4 +1,4 @@
-# Task List: Migration Vertex AI Search (Epic 0, Epic 1, Epic 2, Epic 3 & Epic 4)
+# Task List: Migration Vertex AI Search & Multi-Agent Quality Gate (Epics 0 - 6)
 
 ## Epic 0: Spike & ADR
 - [x] Task 0.1: VAIS-001 — Spike API Discovery Engine & Viết ADR 0001
@@ -131,6 +131,63 @@
   - Verify: `.venv/bin/pytest tests/unit/test_terraform_hcl_syntax.py`
   - Files: `deployment/terraform/main.tf`
 
+## Epic 5: Agent Layer
+- [x] Task 5.1: VAIS-050 — RBAC Injection qua code tại server
+  - Description: Sửa prompt của L2 agent để LLM chỉ truyền `query` và `system`. `allowed_systems` được tính bằng code từ `current_sso_user.get()` và giao với hệ thống được request.
+  - Acceptance: LLM không thể mở rộng quyền; test verify truyền trái quyền bị chặn sạch.
+  - Verify: `.venv/bin/pytest tests/unit/test_epic5_agent_layer.py -k test_vais_050`
+  - Files: `it_helpdesk_agent/agent.py`, `it_helpdesk_agent/tools/enterprise_rag/rag_tools.py`
+
+- [x] Task 5.2: VAIS-051 — Multi-chunk Document Reassembly
+  - Description: Bổ sung `parent_doc_id` và `chunk_index` vào `KnowledgeArticle`, cập nhật `get_system_manual` để tự động ghép nối các chunk có cùng `parent_doc_id`.
+  - Acceptance: `get_system_manual` trả về tài liệu đầy đủ thứ tự chunk.
+  - Verify: `.venv/bin/pytest tests/unit/test_epic5_agent_layer.py -k test_vais_051`
+  - Files: `it_helpdesk_agent/tools/enterprise_rag_mcp/rag_models.py`, `it_helpdesk_agent/tools/enterprise_rag/rag_tools.py`
+
+- [x] Task 5.3: VAIS-052 — Configurable RAG_TOP_K
+  - Description: Thêm biến môi trường `RAG_TOP_K` (mặc định 8, kẹp an toàn $[1, 100]$).
+  - Acceptance: `search_enterprise_knowledge` tôn trọng `RAG_TOP_K` và kẹp giá trị biên.
+  - Verify: `.venv/bin/pytest tests/unit/test_epic5_agent_layer.py -k test_vais_052`
+  - Files: `it_helpdesk_agent/tools/enterprise_rag/rag_tools.py`
+
+- [x] Task 5.4: VAIS-053 — RAG Latency Budget & Graceful Fallback
+  - Description: Giới hạn thời gian RAG tối đa 4.0s (`RAG_SEARCH_TIMEOUT_SECONDS`), tự động fallback thông báo tiếng Việt khi timeout.
+  - Acceptance: Timeout không làm sập agent; trả thông điệp lịch sự và gợi ý tạo ticket.
+  - Verify: `.venv/bin/pytest tests/unit/test_epic5_agent_layer.py -k test_vais_053`
+  - Files: `it_helpdesk_agent/tools/enterprise_rag/rag_tools.py`
+
+- [x] Task 5.5: VAIS-054 — RBAC-aware Semantic Cache Hashing
+  - Description: Cache key private phân tách bằng `compute_rbac_hash(allowed_systems)`. Thu hồi quyền lập tức vô hiệu hóa cache. TTL phân tầng L1=3600s, L2=300s, L3=0s.
+  - Acceptance: Test thu hồi quyền làm đổi hash và miss cache; TTL phân bổ đúng tầng.
+  - Verify: `.venv/bin/pytest tests/unit/test_epic5_agent_layer.py -k test_vais_054`
+  - Files: `it_helpdesk_agent/app_utils/semantic_cache.py`, `it_helpdesk_agent/agent.py`
+
+## Epic 6: Eval & Quality Gate (Ready for Execution)
+- [ ] Task 6.1: VAIS-060 — Multi-backend Eval Harness
+  - Description: Nâng cấp `scripts/eval_harness.py` nhận tham số `--store {in_memory, bigquery, vertex_ai_search}`.
+  - Acceptance: Harness chạy được trên cả 3 backend.
+  - Verify: `python scripts/eval_harness.py --store in_memory`
+  - Files: `scripts/eval_harness.py`
+
+- [ ] Task 6.2: VAIS-061 — Golden Dataset Mở Rộng & Decoupled IR Metrics
+  - Description: Mở rộng `data/golden_dataset.json` lên $\ge 120$ queries ($\ge 30$ natural Vietnamese queries không t-code, $\ge 15$ RBAC negatives, $\ge 10$ governance, $\ge 10$ injection traps) và tính toán Precision@k, Recall@k, MRR, Hit Rate, RBAC Leakage Rate.
+  - Acceptance: Dataset đạt chuẩn, metrics đo lường đầy đủ.
+  - Verify: `.venv/bin/pytest tests/unit/test_eval_metrics.py`
+  - Files: `data/golden_dataset.json`, `scripts/eval_harness.py`
+
+- [ ] Task 6.3: VAIS-062 — Empirical A/B Benchmark Report
+  - Description: Chạy eval harness trên BigQuery vs Vertex AI Search, lập báo cáo so sánh độ trễ p50/p95/p99, chi phí, độ chính xác.
+  - Acceptance: Báo cáo `docs/eval/ab_bigquery_vs_agent_search_2026-09-01.md` hoàn chỉnh với số liệu đo đạc thực tế.
+  - Verify: File exists and passes review.
+  - Files: `docs/eval/ab_bigquery_vs_agent_search_2026-09-01.md`
+
+- [ ] Task 6.4: VAIS-063 — CI Quality Gate Script
+  - Description: Viết script `scripts/ci/check_eval_quality_gate.py` assert RBAC Leakage = 0.0%, Injection Defense = 100%, Recall@3 $\ge 85.0\%$.
+  - Acceptance: Script exit 0 khi đạt chuẩn, exit 1 khi vi phạm.
+  - Verify: `python scripts/ci/check_eval_quality_gate.py --store in_memory`
+  - Files: `scripts/ci/check_eval_quality_gate.py`
+
 ## Checkpoint & Quality Gate
-- [x] Tất cả tests pass (257/257 Unit & Integration tests)
+- [x] Tất cả tests pass (274/274 Unit & Integration tests)
 - [x] Code review checklist cleared
+- [x] Tài liệu kiến trúc, specs, runbook, và tasks đồng bộ 100%

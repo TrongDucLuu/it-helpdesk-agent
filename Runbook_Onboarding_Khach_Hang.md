@@ -2,7 +2,7 @@
 
 > **Dành cho:** Solutions Architects, DevOps Engineers, và System Administrators  
 > **Hệ thống:** IT Helpdesk Multi-Agent AI System (`it-helpdesk-agent`)  
-> **Phiên bản tài liệu:** 2.0 (Config-Driven & Tiered Ingestion Architecture)
+> **Phiên bản tài liệu:** 3.0 (Vertex AI Search & Zero-Trust In-Process Architecture)
 
 ---
 
@@ -20,8 +20,8 @@ Hệ thống `it-helpdesk-agent` được thiết kế theo kiến trúc **Confi
                 v                                                          v
    [Đường Đọc: Runtime Agent]                               [Đường Ghi: Ingestion Pipeline]
    - Security-Trimming (IDOR/RBAC)                          - Structured Document Parser
-   - Dynamic System Filter                                  - Tiered Chunking Strategy
-   - Prompt Context Injection                               - CDC + BigQuery MERGE Upsert
+   - Pre-Query Filter Builder                               - Tiered Chunking Strategy
+   - In-Process RAG Tools                                   - structData JSONL + FULL Reconciliation
 ```
 
 ---
@@ -178,12 +178,13 @@ document_processing:
 
 ---
 
-### Bước 3: Cấu hình Retrieval & Vector Search
+### Bước 3: Cấu hình Retrieval & Knowledge Backend
 Trong `config/systems.yaml`, cấu hình tham số tìm kiếm và mở rộng tính năng:
 ```yaml
 retrieval:
-  fraction_lists_to_search: 0.05   # Tỷ lệ IVF centroid clusters cần quét (mặc định 5%)
-  hybrid_search_enabled: false      # Bật/tắt Hybrid Search kết hợp từ khóa & vector
+  top_k: 8                          # Số lượng tài liệu lấy về tối đa (kẹp trong [1, 100])
+  timeout_seconds: 4.0              # Hạn mức thời gian RAG (fallback tiếng Việt khi timeout)
+  hybrid_search_enabled: true       # Bật Hybrid Search (Dense + Lexical + Semantic Reranker)
 ```
 
 ---
@@ -193,21 +194,34 @@ retrieval:
 Toàn bộ pipeline nạp dữ liệu được cấu trúc dạng package mở rộng [`scripts/ingest/`](file:///Users/luuduc/.gemini/antigravity/scratch/it-helpdesk-agent/scripts/ingest/):
 - **`parsers.py`**: Xử lý đa định dạng (`.md`, `.txt`, `.docx`, `.pdf` qua PyPDF hoặc Document AI Layout, `.jsonl`).
 - **`chunkers.py`**: Phân chia đoạn tri thức đa chiến lược (Fixed, Semantic, Tiered Section-Aware).
-- **`embedders.py`**: Sinh dense vector embeddings từ Vertex AI với cơ chế Fail-Closed.
-- **`loaders.py`**: Quản lý Staging BigQuery, MERGE Atomic Upsert, dọn dẹp Chunk mồ côi và IVF Vector Index.
-- **`scripts/ingest_knowledge_base.py`**: Giao diện dòng lệnh CLI Driver tương thích ngược.
+- **`jsonl_builder.py`**: Chuẩn hóa corpus thành file JSON Lines `structData` cho Discovery Engine.
+- **`gcs_uploader.py`**: Upload file JSONL lên Cloud Storage Corpus Bucket.
+- **`vais_importer.py`**: Gọi API Discovery Engine nạp tài liệu với `ReconciliationMode.FULL`.
+- **`loaders.py`**: Quản lý Staging BigQuery & Dead Letter Queue (DLQ).
+- **`scripts/ingest_knowledge_base.py`**: Giao diện dòng lệnh CLI Driver hợp nhất (`--backend {vertex_ai_search, bigquery, in_memory}`).
 
 Tập hợp tài liệu tri thức của khách hàng theo định dạng hỗ trợ và chạy lệnh nạp:
 
 ```bash
-# Nạp từ thư mục tài liệu với hệ thống mặc định là ERP (Dry run kiểm tra trước)
+# 1. Chạy Dry-Run kiểm tra định dạng và cấu trúc JSONL (Không tốn chi phí GCP)
 python scripts/ingest_knowledge_base.py \
+    --backend vertex_ai_search \
     --source-dir="data/knowledge_base/" \
     --default-system="ERP" \
     --dry-run
 
-# Nạp chính thức vào BigQuery Production
+# 2. Nạp chính thức vào Vertex AI Search (Agent Search Data Store)
 python scripts/ingest_knowledge_base.py \
+    --backend vertex_ai_search \
+    --project-id="your-gcp-project-id" \
+    --gcs-bucket="your-corpus-bucket-name" \
+    --data-store-id="it-helpdesk-kb-datastore" \
+    --source-dir="/path/to/customer/docs" \
+    --default-system="ERP"
+
+# 3. (Tùy chọn Legacy) Nạp vào BigQuery nếu khách hàng dùng Data Warehouse
+python scripts/ingest_knowledge_base.py \
+    --backend bigquery \
     --project-id="your-gcp-project-id" \
     --dataset-id="it_helpdesk_kb" \
     --table-name="knowledge_articles" \
@@ -217,51 +231,29 @@ python scripts/ingest_knowledge_base.py \
 
 Quá trình nạp tự động:
 1. Trích xuất văn bản và phân cấp cây tài liệu (`section_hierarchy` gồm `h1, h2, h3`).
-2. Thực hiện CDC pre-check (SHA-256) bỏ qua sinh vector trùng lặp.
-3. Batch load vào Staging Table và Atomic `MERGE` vào bảng đích.
-4. Tự động dọn dẹp các chunk mồ côi (orphaned chunks).
-5. Tự động kiểm tra/khởi tạo BigQuery IVF Vector Index với mệnh đề `STORING (system, category, id, title, content, section_hierarchy)`.
-6. Giám sát Vector Index Coverage qua `INFORMATION_SCHEMA.VECTOR_INDEXES`.
+2. Gán metadata phân quyền, ngày hiệu lực (`effective_date`), ngày hết hạn (`expiry_date`), và `parent_doc_id` / `chunk_index`.
+3. Chuẩn hóa sang `structData` JSONL và nạp bất đồng bộ lên Discovery Engine.
+4. Discovery Engine tự động thực hiện nhúng vector và tạo chỉ mục Hybrid Search & Semantic Ranker.
 
 ---
 
-## 3. Cập Nhật Chiến Lược Chunking Cho Khách Hàng Đang Chạy
+## 3. Cập Nhật Chiến Lược Chunking & Đồng Bộ Corpus
 
 Khi một khách hàng đang hoạt động yêu cầu đổi chiến lược chunking (ví dụ: từ `fixed` sang `auto` hoặc điều chỉnh `max_chunk_size` từ 1200 xuống 800):
 
-```
-                                  ĐỔI CẤU HÌNH CHUNKING
-                                            │
-                                            ▼
-                           ┌─────────────────────────────────┐
-                           │   Chạy lại Ingestion Pipeline   │
-                           │   (scripts/ingest_knowledge_base)│
-                           └────────────────┬────────────────┘
-                                            │
-                     ┌──────────────────────┴──────────────────────┐
-                     │                                             │
-                     ▼                                             ▼
-       ┌───────────────────────────┐                 ┌───────────────────────────┐
-       │   Các Chunk có ID mới    │                 │   Các Chunk mồ côi (cũ)   │
-       │  MERGE Upsert vào BigQuery│                 │  CLEANUP ORPHANED CHUNKS  │
-       └───────────────────────────┘                 └───────────────────────────┘
-```
-
-### Hiện tượng Chunk mồ côi (Orphaned Chunks):
-- Khi tài liệu được cắt nhỏ hơn, số lượng chunk sinh ra sẽ tăng lên (ví dụ: tài liệu `sap_guide.md` trước đây sinh 2 chunk `ERP-KB-AAA`, `ERP-KB-BBB`; sau khi đổi kích thước sinh ra 4 chunk `ERP-KB-C1`, `ERP-KB-C2`, `ERP-KB-C3`, `ERP-KB-C4`).
-- Nếu chỉ dùng `MERGE` đơn thuần, 2 chunk cũ (`AAA`, `BBB`) vẫn tồn tại trong BigQuery, gây ô nhiễm kết quả tìm kiếm ngữ nghĩa RAG (Vector Search trả về cả phiên bản chunk cũ và mới).
-
-### Cơ chế dọn dẹp tự động của Hệ thống:
-1. `ingest_knowledge_base.py` tự động kích hoạt truy vấn DELETE đối với tất cả các bản ghi có `source_uri` nằm trong danh sách tài liệu vừa nạp nhưng `id` không nằm trong staging table.
-2. DML DELETE được chạy sau Load Job vào staging table (không bị streaming buffer lock).
-3. **Thứ tự thực thi:** MERGE hoàn tất $\rightarrow$ Dọn dẹp Chunk mồ côi $\rightarrow$ Giám sát Vector Index Coverage $\rightarrow$ Đảm bảo tri thức luôn nhất quán 100%.
+### Cơ Chế Dọn Dẹp Chunk Mồ Côi Tự Động:
+1. **Trên Vertex AI Search (`ReconciliationMode.FULL`):**
+   - API Import của Discovery Engine chạy ở chế độ `FULL`. Toàn bộ các chunk cũ không còn xuất hiện trong file JSONL tải lên GCS sẽ **tự động bị xóa bỏ hoàn toàn khỏi Data Store**, ngăn chặn triệt để hiện tượng phân mảnh mồ côi làm nhiễu kết quả RAG.
+2. **Trên BigQuery (Legacy):**
+   - `ingest_knowledge_base.py` tự động kích hoạt truy vấn DML DELETE đối với tất cả các bản ghi có `source_uri` nằm trong danh sách tài liệu vừa nạp nhưng `id` không nằm trong staging table.
 
 ```bash
-# Lệnh chạy cập nhật lại tri thức cho khách hàng:
+# Lệnh cập nhật lại toàn bộ tri thức cho khách hàng trên Vertex AI Search:
 python scripts/ingest_knowledge_base.py \
+    --backend vertex_ai_search \
     --project-id="$PROJECT_ID" \
-    --dataset-id="$DATASET_ID" \
-    --table-name="knowledge_articles" \
+    --gcs-bucket="$GCS_CORPUS_BUCKET" \
+    --data-store-id="it-helpdesk-kb-datastore" \
     --source-dir="./knowledge_base_files"
 ```
 
@@ -321,11 +313,8 @@ locust -f scripts/load_test/locustfile.py --host="https://helpdesk.customer.corp
 | **Production API Shielding** | `/docs`, `/redoc`, `/openapi.json` được tự động tắt trên Production. | ✅ Bắt buộc |
 | **Rate Limiting Hardening** | Rate limit key dùng token-hash hoặc client IP đằng sau Load Balancer; SHA-256 xác định đa worker. | ✅ Bắt buộc |
 | **Telemetry Privacy (Fail-Closed)** | Mặc định `TELEMETRY_ANONYMIZE_USERS=true`, `TELEMETRY_INCLUDE_QUERY=false`. Độ trễ đo bằng `perf_counter()`. | ✅ Bắt buộc |
-| **BigQuery Pre-Filtering & Index** | Vector search dùng Pre-Filter subquery trong tham số 1 của `VECTOR_SEARCH` và DDL có `STORING`. | ✅ Bắt buộc |
-| **Vector Index Coverage** | Giám sát qua `INFORMATION_SCHEMA.VECTOR_INDEXES`, cảnh báo nếu coverage = 0% trên tập dữ liệu lớn. | ✅ Bắt buộc |
-| **Section Hierarchy** | Trường RECORD `section_hierarchy` được trích xuất và lưu trữ đầy đủ trong BigQuery. | ✅ Bắt buộc |
-| **Deduplication & CDC** | Hash `content_hash` bằng SHA-256 được cập nhật chính xác, không trùng lặp ID trong staging. | ✅ Bắt buộc |
-| **Redis Shared State & HA** | Memorystore Redis kết nối qua Direct VPC Egress, Rate Limit Fail-Open và Cache Soft Fail-Closed (Candidate Vector Scan). | ✅ Bắt buộc |
+| **Vertex AI Search Pre-Filtering** | Tiền lọc metadata `system: ANY(...)` qua `build_system_filter()` chống injection và rò rỉ IDOR. | ✅ Bắt buộc |
+| **ReconciliationMode.FULL** | Xoá bỏ sạch sẽ các chunk mồ côi khi nạp corpus mới vào Discovery Engine. | ✅ Bắt buộc |
+| **Section Hierarchy & Multi-Chunk** | Trường `parent_doc_id` và `chunk_index` được trích xuất và bảo toàn đầy đủ. | ✅ Bắt buộc |
+| **Redis Shared State & RBAC Hash** | Memorystore Redis kết nối qua Direct VPC Egress, Cache phân tách ranh giới bằng `compute_rbac_hash`. | ✅ Bắt buộc |
 | **Load Test Benchmark** | Đạt p95 Latency < 2.5s ở bậc tải Peak CCU theo cam kết SLA. | ✅ Bắt buộc |
-
-

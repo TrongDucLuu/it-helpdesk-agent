@@ -1,6 +1,6 @@
 # IT Helpdesk Multi-Agent AI System (Enterprise Production-Ready)
 
-Hệ thống **IT Helpdesk Multi-Agent AI** thông minh, phân cấp 3 mức độ (3-Tier Support Architecture), tích hợp cơ chế bảo mật doanh nghiệp chuẩn **Enterprise SSO (Google OIDC + RBAC)**, tối ưu hóa chi phí và độ trễ với **BigQuery Serverless Vector Search** & **Semantic Cache Layer**, ứng dụng các công nghệ tiên tiến nhất của hệ sinh thái **Google AI (Google ADK, Gemini 3, Model Context Protocol - MCP, Vertex AI Memory Bank, Google Cloud Firestore)** và sẵn sàng triển khai trên **Google Cloud Run**.
+Hệ thống **IT Helpdesk Multi-Agent AI** thông minh, phân cấp 3 mức độ (3-Tier Support Architecture), tích hợp cơ chế bảo mật doanh nghiệp chuẩn **Zero-Trust Enterprise SSO (Google OIDC + Granular RBAC)**, tối ưu hóa chi phí và độ trễ với **Google Cloud Agent Search / Vertex AI Search** & **RBAC-Aware Semantic Cache Layer**, ứng dụng các công nghệ tiên tiến nhất của hệ sinh thái **Google AI (Google ADK, Gemini 2.5/3, Vertex AI Memory Bank, Google Cloud Firestore)** và sẵn sàng triển khai trên **Google Cloud Run**.
 
 ---
 
@@ -19,8 +19,8 @@ Hệ thống **IT Helpdesk Multi-Agent AI** thông minh, phân cấp 3 mức đ�
                                                  │
                                                  ▼
                                   ┌─────────────────────────────┐
-                                  │    Semantic Cache Layer     │ ──[ HIT (Sim >= 0.92) ]──► [ Trả lời tức thì ]
-                                  │    (Vector Cosine Match)    │                             (Tiết kiệm 100% Token)
+                                  │  RBAC-Aware Semantic Cache  │ ──[ HIT (Sim >= 0.92, Hash Match) ]──► [ Trả lời tức thì ]
+                                  │  (User & Tier Scoped Cache) │                                        (Tiết kiệm 100% Token)
                                   └──────────────┬──────────────┘
                                                  │ [ MISS ]
                                                  ▼
@@ -32,13 +32,14 @@ Hệ thống **IT Helpdesk Multi-Agent AI** thông minh, phân cấp 3 mức đ�
                  ▼                               ▼                              ▼
   ┌─────────────────────────────┐ ┌─────────────────────────────┐ ┌─────────────────────────────┐
   │    l1_selfservice_agent     │ │   l2_enterprise_rag_agent   │ │  l3_deep_diagnostics_agent  │
-  │      (Gemini 3 Flash)       │ │      (Gemini 3 Flash)       │ │   (Gemini 3 Pro Preview)    │
+  │      (Gemini 3 Flash)       │ │      (Gemini 3 Flash)       │ │   (Gemini 2.5/3 Pro)        │
   └──────────────┬──────────────┘ └──────────────┬──────────────┘ └──────────────┬──────────────┘
           ┌──────┴──────┐                 ┌──────┴──────┐                 ┌──────┴──────┐
           ▼             ▼                 ▼             ▼                 ▼             ▼
     [Ticketing]   [Memory Tool]     [Enterprise   [Email Draft]     [Log Analyzer  [Compliance
-     (Firestore)                     RAG MCP]                         RCA Tool]     SLA Tool]
-                                  (BigQuery/Mem)                     (RBAC Gate)   (RBAC Gate)
+     (Firestore)                     RAG Tools]    (In-Process)       RCA Tool]     SLA Tool]
+                                  (Vertex AI Search/                 (RBAC Gate)   (RBAC Gate)
+                                   BigQuery/InMemory)
 ```
 
 ### 🟢 Mức 1 — Giao Tiếp & Hỗ Trợ Cơ Bản (`l1_selfservice_agent`)
@@ -47,9 +48,11 @@ Hệ thống **IT Helpdesk Multi-Agent AI** thông minh, phân cấp 3 mức đ�
 - **Tiếp nhận & Phân loại sự cố:** Lắng nghe mô tả lỗi, tự động tạo ticket với category và mức độ ưu tiên chính xác (`Low`, `Medium`, `High`, `Critical`).
 
 ### 🔵 Mức 2 — Tra Cứu Tài Liệu (RAG) & Hệ Thống Doanh Nghiệp (`l2_enterprise_rag_agent`)
-- **Enterprise RAG MCP:** Tích hợp tra cứu sâu cơ sở tri thức hệ thống **ERP** (SAP/Oracle PO & kế toán), **HRM** (Workday chấm công & onboarding), **CRM** (Salesforce lead sync & quota).
-- **Kiến trúc Adapter Linh hoạt:** Tự động chuyển đổi giữa `InMemoryKnowledgeStore` (cho local dev/unit test) và `BigQueryVectorKnowledgeStore` (cho Production Serverless Vector Search không tốn chi phí duy trì Index Endpoint cố định).
-- **Đọc hiểu & Tóm tắt tài liệu dài:** Trích xuất các điểm mấu chốt và action items từ các tài liệu kỹ thuật dài.
+- **Enterprise In-Process FunctionTools:** Tích hợp trực tiếp các công cụ tra cứu tri thức nội bộ hệ thống **ERP** (SAP/Oracle PO & kế toán), **HRM** (Workday chấm công & onboarding), **CRM** (Salesforce lead sync & quota), loại bỏ hoàn toàn độ trễ giao tiếp ngoại trình IPC của MCP.
+- **Backend Vertex AI Search (Agent Search):** Tìm kiếm lai ngữ nghĩa (Hybrid Semantic + Lexical Search), tự động nhúng vector (Managed Embeddings), xếp hạng lại kết quả (Semantic Reranking), và lọc phân quyền siêu nhanh bằng metadata pre-filtering.
+- **Tái Hợp Nhất Đa Phân Mảnh (Multi-Chunk Reassembly):** Công cụ `get_system_manual` sử dụng `parent_doc_id` và `chunk_index` để ghép nối hoàn chỉnh các chương/mục của tài liệu quy trình dài, bảo đảm không bị mất bước kỹ thuật.
+- **Kiến trúc Adapter Linh hoạt (`get_knowledge_store`):** Hỗ trợ chuyển đổi liền mạch giữa `vertex_ai_search` (Production Primary), `in_memory` (Local Dev & Unit Test offline), và `bigquery` (Conditional Legacy cho khách hàng có sẵn DWH).
+- **Phòng Thủ Gián Điệp Prompt (Indirect Prompt Injection Defense):** Bọc tài liệu tri thức bằng `wrap_retrieved_document()`, escape XML attributes, kiểm soát số lượng thẻ và chỉ thị phân định nghiêm ngặt.
 - **Soạn thảo Email & Cập nhật Ticket:** Soạn bản thảo email phản hồi chuẩn mực, lịch sự và tự động đồng bộ tiến độ ticket.
 
 ### 🟣 Mức 3 — Phân Tích & Suy Luận Chuyên Sâu (`l3_deep_diagnostics_agent`)
@@ -59,31 +62,23 @@ Hệ thống **IT Helpdesk Multi-Agent AI** thông minh, phân cấp 3 mức đ�
 
 ---
 
-## ⚡ 2. Tối Ưu Hóa Hiệu Năng & Chi Phí (Redis Vector Semantic Cache & BigQuery Vector)
+## ⚡ 2. Tối Ưu Hóa Hiệu Năng & Chi Phí (RBAC-Aware Semantic Cache & Managed Search)
 
-### A. Redis Vector Semantic Cache (`semantic_cache.py`)
-- **Vấn đề giải quyết:** Các câu hỏi IT Helpdesk lặp lại thường xuyên (ví dụ: *"hướng dẫn đổi pass wifi"*, *"cách thay đổi mật khẩu wifi văn phòng"*). Nếu mỗi câu hỏi đều gọi Gemini sẽ tốn chi phí token và mất 1.5–3s phản hồi.
-- **Giải pháp:** Sử dụng **Redis Multi-Tenant Candidate-Set Vector Cache** kết hợp cosine similarity và phân quyền tenant (`public` vs `user:{uid}`):
-  - **Multi-Tenant Candidate Sets**: Phân tách key sets theo phạm vi quyền hạn (`sem_cache:keys:public` và `sem_cache:keys:user:{uid}`), thực hiện batch fetch `mget` và tính cosine similarity tốc độ cao.
-  - **Bộ lọc An toàn Public FAQ (`_is_safe_public_faq`)**: Tự động chia sẻ cache công khai (`is_public=True`) cho các câu hỏi hướng dẫn chung (Wi-Fi, VPN, máy in) thuộc tầng L1 không gọi tool và không chứa PII. Các câu hỏi riêng tư (reset mật khẩu, mở khóa tài khoản cá nhân, mã ticket) được cô lập nghiêm ngặt theo `user_id`.
-  - **Soft Fail-Closed & Circuit Breaker**: Tự động bypass cache và log `WARNING` khi Redis gặp sự cố mạng, bảo đảm luồng hội thoại không bị gián đoạn.
+### A. Redis Vector Semantic Cache Có Nhận Thức Phân Quyền (`semantic_cache.py`)
+- **Vấn đề giải quyết:** Các câu hỏi IT Helpdesk lặp lại thường xuyên (ví dụ: *"hướng dẫn đổi pass wifi"*, *"quy trình mở kỳ kế toán"*). Nếu mỗi câu hỏi đều gọi LLM sẽ tốn chi phí token và mất 1.5–3s phản hồi.
+- **Bảo Vệ Đa Tầng RBAC Hash (`compute_rbac_hash`):**
+  - Khắc phục lỗ hổng rò rỉ quyền khi vai trò người dùng thay đổi: Khóa cache private được gắn kèm `hashlib.sha256(sorted(allowed_systems))`. Nếu user bị thu hồi quyền truy cập ERP, toàn bộ cache entry cũ chứa tài liệu ERP lập tức bị vô hiệu hóa (Cache Invalidation by Scope).
+  - **TTL Phân Tầng:** Tầng L1 (FAQ công khai) có TTL 3600s; Tầng L2 (RAG nghiệp vụ có phân quyền) có TTL 300s ngắn hơn để tôn trọng cập nhật tài liệu và thu hồi quyền; Tầng L3 (Chẩn đoán sự cố) tự động bypass cache (TTL = 0s).
+- **Bộ lọc An toàn Public FAQ (`_is_safe_public_faq`):** Tự động chia sẻ cache công khai (`is_public=True`) cho các câu hỏi hướng dẫn chung (Wi-Fi, VPN, máy in) thuộc tầng L1 không gọi tool và không chứa PII.
+- **Soft Fail-Closed & Circuit Breaker:** Tự động bypass cache và log `WARNING` khi Redis gặp sự cố mạng, bảo đảm luồng hội thoại không bị gián đoạn.
 
-#### 📊 Số Liệu Benchmark Thực Tế (1.000 Cached Entries):
-Thực hiện benchmark trên tập dữ liệu 1.000 entry embedding thực tế (`scripts/benchmark_semantic_cache.py`):
-
-| Backend | Tốc độ ghi (1.000 entries) | Hit Latency (p50) | Hit Latency (p95) | Hit Latency (p99) | Tăng tốc so với LLM |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **InMemorySemanticCache** | **0.015s** (68,365 writes/s) | **7.19ms** | **7.27ms** | **7.29ms** | **~167x** |
-| **Redis Candidate-Set Cache** | **0.200s** (5,005 writes/s) | **21.19ms** | **21.55ms** | **28.45ms** | **~57x** |
-
-- **Endpoints Giám Sát:**
-  - `GET /api/cache/stats`: Xem tỷ lệ hit rate, số lượng entry trong cache.
-  - `GET /api/cache/query?q=...`: Tra cứu trực tiếp nội dung bộ nhớ đệm ngữ nghĩa.
-
-### B. Serverless BigQuery Vector Search (`knowledge_store.py`)
-- **So sánh với Vertex AI Vector Search:**
-  - **Vertex AI Vector Search:** Đòi hỏi duy trì Index Endpoint chuyên dụng 24/7 (chi phí cố định ~$100–$300/tháng kể cả khi không có truy vấn).
-  - **BigQuery Vector Search:** Serverless $100\%$, dùng hàm `VECTOR_SEARCH` hoặc `COSINE_DISTANCE` trực tiếp trên bảng BigQuery. Với quy mô $< 100\text{k}$ vectors, chi phí duy trì gần như **0 USD/tháng**, cực kỳ linh hoạt và dễ quản lý qua SQL.
+### B. Managed Search Engine: Vertex AI Search vs BigQuery Vector
+- **Vertex AI Search (Agent Search):**
+  - Fully Managed Search Engine hỗ trợ Hybrid Search (Dense Vector + BM25 Lexical + TF-IDF) và Google Semantic Ranker.
+  - Tự động lập chỉ mục (Managed Indexing), lọc phân quyền qua Metadata Filter Expressions (`system: ANY("ERP", "HRM")`).
+  - Không cần duy trì pipeline sinh embedding thủ công, không tốn tài nguyên bảo trì vector index định kỳ.
+- **BigQuery Vector Search (Conditional Legacy):**
+  - Giữ lại dưới dạng tùy chọn (`KNOWLEDGE_BACKEND=bigquery`) cho các khách hàng đã lưu trữ toàn bộ Data Warehouse trên BigQuery.
 
 ---
 
@@ -94,73 +89,43 @@ Hệ thống được thiết kế theo tiêu chuẩn an toàn thông tin cấp 
 | Cơ chế bảo mật | Chi tiết kỹ thuật | Trạng thái bảo vệ |
 | :--- | :--- | :--- |
 | **Xác thực Google OIDC Chuẩn** | Sử dụng `google.oauth2.id_token.verify_oauth2_token` kiểm tra chữ ký số qua JWKS public certs của Google (`accounts.google.com`). | ✅ **Strict OIDC** |
-| **JWT Single Verification Memoization** | Kết quả verify token được cache vào `request.state.verified_sso_user`, loại bỏ hoàn toàn việc giải mã chữ ký trùng lặp giữa `RateLimiterMiddleware` và `SSOAuthenticationMiddleware` (1 request = đúng 1 lần verify). | ✅ **Zero Overhead** |
+| **JWT Single Verification Memoization** | Kết quả verify token được cache vào `request.state.verified_sso_user`, loại bỏ hoàn toàn việc giải mã chữ ký trùng lặp giữa các Middleware. | ✅ **Zero Overhead** |
 | **Fail-Closed Domain Filtering** | Bắt buộc cấu hình `ALLOWED_DOMAINS` trên Production. Ngăn chặn triệt để tài khoản cá nhân `@gmail.com` truy cập hệ thống. | ✅ **Fail-Closed** |
-| **Cô Lập Thuật Toán (No Confusion)** | RS256 chỉ dành cho token Google OIDC; HS256 chỉ dùng cho Dev Mock Token. Tuyệt đối không cho phép dùng chung secret key. | ✅ **Algorithm Isolation** |
-| **Connection Pooling & Cache JWKS** | Singleton `Request` adapter kết hợp `requests.Session()` tái sử dụng connection pool HTTPS, giảm thiểu latency xác thực. | ✅ **High Performance** |
-| **Bảo Vệ Toàn Diện Middleware** | `SSOAuthenticationMiddleware` bảo vệ mọi endpoint (ADK agent, API, session) ngoại trừ các public endpoint (`/healthz`, `/docs`). | ✅ **Zero Trust Per-Route** |
-| **Phân Quyền RBAC 4 Tầng Ưu Tiên** | Cơ chế `resolve_user_roles` phân cấp: YAML Mapping $\rightarrow$ Biến môi trường $\rightarrow$ Firestore $\rightarrow$ Fallback `employee`. Keying cache bảo vệ bằng SHA-256 xác định. | ✅ **Multi-Tier RBAC** |
-| **Terraform Edge Security & SLA Guard** | `check "production_edge_security"` chặn triển khai Cloud Run `allow_unauthenticated=true` trên Production nếu không có Cloud Armor WAF; `check "production_model_sla"` cảnh báo model preview trên Prod. | ✅ **IaC Enforcement** |
-
-| **Phân Quyền RBAC (Role-Based)** | Sử dụng `ContextVar` truyền context người dùng vào các tool nhạy cảm (L3 RCA, Compliance SLA), chặn truy cập trái phép từ user thường. | ✅ **Granular RBAC** |
+| **Server-Side RBAC Enforcement** | Quyền `allowed_systems` được tính toán độc lập tại server từ `current_sso_user` và giao với gợi ý của LLM. LLM **tuyệt đối không thể tự cấp quyền**. | ✅ **Zero-Trust RBAC** |
+| **Indirect Prompt Injection Defense** | Bọc dữ liệu bằng `wrap_retrieved_document`, escape XML delimiters, gắn cảnh báo `INDIRECT_PROMPT_INJECTION_DEFENSE_INSTRUCTION`. | ✅ **Defense-in-Depth** |
+| **Pre-Query Security Trimming** | `build_system_filter()` tiền lọc an toàn trên Vertex AI Search; nếu user không có quyền, trả về sentinel `system = "__ZERO_ACCESS_SENTINEL__"`. | ✅ **Fail-Closed Filter** |
+| **Governance Date & Tombstone Filter** | Tự động loại trừ tài liệu quá hạn (`expiry_date`), chưa có hiệu lực (`effective_date`), hoặc đã bị đánh dấu xoá (`is_deleted=True`). | ✅ **Content Governance** |
+| **Latency Budget & Graceful Fallback** | Giới hạn thời gian truy vấn RAG tối đa 4.0s (`RAG_SEARCH_TIMEOUT_SECONDS`), tự động trả phản hồi tiếng Việt lịch sự khi timeout. | ✅ **Latency Guard** |
 
 ### Ma Trận Phân Quyền (RBAC Matrix)
 
 | Vai trò (Role) | L1 Self-Service | L2 Enterprise RAG | L3 Log RCA Tool | L3 Contract SLA Tool |
 | :--- | :---: | :---: | :---: | :---: |
-| **`employee`** | ✅ Cho phép | ✅ Cho phép | ❌ Bị từ chối (`forbidden`) | ❌ Bị từ chối (`forbidden`) |
-| **`it_admin` / `sys_admin`** | ✅ Cho phép | ✅ Cho phép | ✅ Cho phép | ✅ Cho phép |
+| **`employee`** | ✅ Cho phép | ✅ Cho phép (Chỉ tài liệu public/HRM cơ bản) | ❌ Bị từ chối (`forbidden`) | ❌ Bị từ chối (`forbidden`) |
+| **`erp_user` / `accountant`** | ✅ Cho phép | ✅ Cho phép (Tài liệu ERP) | ❌ Bị từ chối | ❌ Bị từ chối |
+| **`hr_specialist` / `hr_manager`** | ✅ Cho phép | ✅ Cho phép (Tài liệu HRM) | ❌ Bị từ chối | ❌ Bị từ chối |
+| **`sales_rep` / `crm_manager`** | ✅ Cho phép | ✅ Cho phép (Tài liệu CRM) | ❌ Bị từ chối | ❌ Bị từ chối |
+| **`it_admin` / `sys_admin`** | ✅ Cho phép | ✅ Cho phép (Toàn bộ ERP/HRM/CRM) | ✅ Cho phép | ✅ Cho phép |
 | **`compliance_officer` / `legal_counsel`** | ✅ Cho phép | ✅ Cho phép | ❌ Bị từ chối | ✅ Cho phép |
 | **`devops_engineer` / `lead_engineer`** | ✅ Cho phép | ✅ Cho phép | ✅ Cho phép | ❌ Bị từ chối |
 
 ---
 
-## 🛡️ 4. Vì Sao Hệ Thống Này Production-Ready? (Enterprise Readiness)
-
-Khác với các PoC demo LLM thông thường, hệ thống này được xây dựng với kiến trúc phòng thủ đa tầng (Defense-in-Depth), kiểm soát chi phí chặt chẽ và khả năng tự phục hồi (Resilience):
-
-### 1. An Ninh & Bộ Kiểm Thử Đối Kháng (Adversarial Security Suite)
-- **Chống IDOR Toàn Diện:** Kiểm thử tự động chứng minh nhân viên thường (`employee`) tuyệt đối không thể đọc, cập nhật hoặc định tuyến ticket của nhân viên khác.
-- **Miễn Nhiễm SQL Injection:** Mọi truy vấn BigQuery Vector Search đều được tham số hóa $100\%$ qua Query Parameters (`@system_param`, `@query_vector`, `@allowed_systems`), ngăn chặn triệt để SQL Injection.
-- **Fail-Closed Security Posture:**
-  - Trong môi trường Production (`ENVIRONMENT=prod` hoặc `K_SERVICE`), nếu thiếu biến cấu hình bắt buộc (`ALLOWED_DOMAINS`, `SYSTEMS_CONFIG_PATH`) hoặc Vertex AI embedding gặp sự cố, hệ thống **tự động ngắt kết nối (Fail-Closed/Bypass)** thay vì âm thầm dùng pseudo-vector giả lập.
-  - Phân quyền RBAC bảo vệ nghiêm ngặt các công cụ mức cao (L3 RCA & Compliance SLA Review) qua `ContextVar` thread-safe.
-
-### 2. Kiểm Soát Chi Phí Tối Ưu Cho Vertex AI (Cost Governance)
-- **Định Tuyến Phân Tầng 3-Tier:** Hơn $70\%$ lưu lượng Helpdesk hàng ngày (FAQ, tra cứu chính sách, mở khóa tài khoản) được xử lý nhanh bởi **Gemini 3 Flash** hoặc trả lời trực tiếp mà không cần kích hoạt **Gemini 3 Pro**.
-- **Bộ Nhớ Đệm Ngữ Nghĩa Cụm (Distributed Semantic Cache):** Tích hợp Redis Memorystore trên VPC private egress, so khớp ngữ nghĩa Cosine Similarity ($\ge 0.92$), phản hồi ở mức mili-giây (xem số liệu benchmark thực tế tại [Mục 2.A](#a-redis-vector-semantic-cache-semantic_cachepy)) và **tiết kiệm $100\%$ chi phí token** cho các câu hỏi trùng lặp.
-- **Kiểm Soát Quota Mức 3 (L3 Rate Limiter with Soft Warning):** Giới hạn tần suất gọi mô hình chuyên sâu L3 theo từng người dùng (Sliding Window), tự động gửi thông báo cảnh báo mềm khi người dùng chạm ngưỡng $\ge 80\%$ quota trong chu kỳ.
-
-### 3. Khả Năng Tự Phục Hồi & Giảm Tải Mềm (Graceful Degradation)
-- **Redis Circuit Breaker & Alerting:** Tự động giám sát lỗi Redis liên tiếp; khi vượt quá ngưỡng $10$ lỗi, Circuit Breaker kích hoạt và bắn cảnh báo khẩn cấp `REDIS_CIRCUIT_BREAKER_ALERT`, chuyển sang chế độ bypass an toàn mà không làm gián đoạn người dùng.
-- **BigQuery Timeouts & Guardrails:** Giới hạn thời gian truy vấn BigQuery Vector Search tối đa $15\text{s}$, tự động xử lý ngoại lệ và trả về phản hồi fallback thân thiện.
-- **Firestore Local Fallback:** Tự động chuyển đổi giữa Firestore cụm phân tán và bộ nhớ đệm cục bộ khi chạy offline/local testing.
-
-### 4. Ma Trận Quy Mô Doanh Nghiệp & Năng Lực CCU (Enterprise Sizing Matrix)
-
-Hệ thống đã được kiểm chứng tải bằng bài test thực tế (**Locust Load Testing Suite**):
-
-| Quy mô Doanh nghiệp | Số lượng Nhân sự | Tải đồng thời (CCU) | Cấu hình Cloud Run | Cấu hình Redis Memorystore | BigQuery & Firestore Tier |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Doanh nghiệp Vừa** | 500 – 2,000 | **50 – 100 CCU** | 2 – 5 instances (2 vCPU, 4GB) | Basic Tier (1GB) | On-demand standard |
-| **Tập đoàn Lớn** | 2,000 – 10,000 | **200 – 500 CCU** | 5 – 15 instances (4 vCPU, 8GB) | Standard HA (5GB) | On-demand + Reservation |
-| **Đại Doanh nghiệp (Enterprise)** | 10,000 – 50,000+ | **1,000 – 2,500+ CCU** | 15 – 50 instances (4 vCPU, 8GB) | Standard HA (10GB+ Multi-node) | BigQuery Slots Commit + Firestore Multi-region |
-
----
-
-## 💾 5. Cơ Chế Lưu Trữ Dữ Liệu (Persistence & State Management)
+## 💾 4. Cơ Chế Lưu Trữ Dữ Liệu & Ingestion Pipeline
 
 1. **Hệ thống Quản lý Ticket (`ticketing_tool.py`):**
    - Tích hợp **Google Cloud Firestore** (`collection: helpdesk_tickets`) hỗ trợ mở rộng không giới hạn khi triển khai trên multi-instance Cloud Run.
-   - Cơ chế write-through cache và fallback tự động sang in-memory khi chạy local dev hoặc test offline.
 2. **Trí nhớ dài hạn (`agent.py`):**
    - Tích hợp **Vertex AI Memory Bank** (`VertexAiMemoryBankService`) tự động lưu vết ngữ cảnh người dùng, lịch sử thiết bị và sự cố lặp lại.
-3. **Cơ sở tri thức (`knowledge_store.py`):**
-   - Hỗ trợ lưu trữ và truy vấn vector trên **Google BigQuery** dataset `it_helpdesk_kb` kết hợp STORING index tối ưu hóa.
+3. **Pipeline Nạp Tri Thức Tự Động (`scripts/ingest_knowledge_base.py`):**
+   - Hỗ trợ đa định dạng: `.md`, `.txt`, `.docx`, `.pdf` (PyPDF hoặc Google Document AI Layout Parser), `.jsonl`.
+   - Chuyển đổi và chuẩn hoá dữ liệu sang cấu trúc `structData` JSONL cho Discovery Engine.
+   - Tải lên Cloud Storage (`gcs_uploader.py`) và thực hiện Import bất đồng bộ với chế độ `ReconciliationMode.FULL` (`vais_importer.py`), tự động xoá bỏ các tài liệu cũ không còn trong corpus.
+   - Cơ chế **Dead Letter Queue (DLQ)** ghi nhận tài liệu lỗi khi parse.
 
 ---
 
-## ⚙️ 6. Cấu Hình Biến Môi Trường (Environment Variables)
+## ⚙️ 5. Cấu Hình Biến Môi Trường (Environment Variables)
 
 Sao chép file cấu hình mẫu:
 ```bash
@@ -171,23 +136,22 @@ cp .env.example .env
 | :--- | :---: | :---: | :--- |
 | `ENVIRONMENT` | Có | `development` | Môi trường: `development`, `staging`, `production`. |
 | `GOOGLE_CLOUD_PROJECT` | Có | — | ID của dự án Google Cloud. |
-| `GOOGLE_CLOUD_REGION` | Có | `us-central1` | Vùng triển khai GCP (ví dụ: `us-central1`, `asia-southeast1`). |
+| `GOOGLE_CLOUD_REGION` | Có | `asia-southeast1` | Vùng triển khai GCP (ví dụ: `asia-southeast1`, `us-central1`). |
 | `SSO_CLIENT_ID` | Có | — | OAuth 2.0 Client ID được cấp từ GCP Console. |
 | `ALLOWED_DOMAINS` | **Bắt buộc** | — | Danh sách domain email công ty được phép đăng nhập (ví dụ: `company.com,corp.com`). |
-| `RATE_LIMITER_BACKEND` | Không | `memory` | Backend cho Rate Limiter (`memory` hoặc `redis`). |
+| `KNOWLEDGE_BACKEND` | Không | `vertex_ai_search` | Backend cho RAG (`vertex_ai_search`, `in_memory`, `bigquery`). |
+| `VERTEX_SEARCH_DATA_STORE_ID` | Có (nếu VAIS) | `it-helpdesk-kb-datastore` | ID của Data Store trên Vertex AI Search / Agent Search. |
+| `VERTEX_SEARCH_LOCATION` | Không | `global` | Location của Data Store (`global`, `asia-southeast1`, v.v.). |
+| `GCS_CORPUS_BUCKET` | Có (nếu nạp) | — | Tên GCS Bucket chứa file JSONL corpus nạp tri thức. |
+| `RAG_TOP_K` | Không | `8` | Số lượng tài liệu lấy về từ backend RAG (kẹp trong khoảng [1, 100]). |
+| `RAG_SEARCH_TIMEOUT_SECONDS` | Không | `4.0` | Hạn mức thời gian tìm kiếm RAG trước khi kích hoạt fallback tiếng Việt. |
 | `SEMANTIC_CACHE_BACKEND` | Không | `memory` | Backend cho Semantic Cache (`memory` hoặc `redis`). |
 | `REDIS_HOST` / `REDIS_PORT` | Không | `localhost:6379` | Địa chỉ kết nối Redis / Google Cloud Memorystore. |
 | `L3_RATE_LIMIT_PER_MINUTE` | Không | `10` | Hạn mức gọi chẩn đoán sâu L3 cho mỗi user/phút (cảnh báo tại 80%). |
-| `ALLOW_LOCAL_DEV_SSO` | Không | `false` | Bật tạo/kiểm tra mock token cho local dev (luôn bị tắt trong Prod). |
-| `USE_FIRESTORE_TICKETS`| Không | `false` | Bật Firestore backend cho ticket storage (tự động bật trên Cloud Run). |
-| `KNOWLEDGE_BACKEND` | Không | `in_memory` | Backend cho RAG (`in_memory` hoặc `bigquery`). |
-| `BIGQUERY_KB_DATASET` | Không | `it_helpdesk_kb`| Dataset BigQuery chứa tài liệu tri thức doanh nghiệp. |
-| `SEMANTIC_CACHE_ENABLED`| Không| `true` | Bật lớp bộ đệm ngữ nghĩa cho câu hỏi lặp lại. |
-| `SEMANTIC_CACHE_THRESHOLD`| Không| `0.92` | Ngưỡng tương đồng cosine để coi là trùng khớp câu hỏi. |
 
 ---
 
-## 🚀 7. Hướng Dẫn Cài Đặt & Chạy Cục Bộ (Local Development)
+## 🚀 6. Hướng Dẫn Cài Đặt & Chạy Cục Bộ (Local Development)
 
 ### Bước 1: Cài đặt Dependencies với `uv`
 ```bash
@@ -198,31 +162,35 @@ uv sync
 ```bash
 uv run pytest tests/ -v
 ```
-*(Hiện tại toàn bộ **157/157 test cases** đều vượt qua $100\%$)*
+*(Hiện tại toàn bộ **274/274 test cases** thuộc Epics 0 đến 5 đều vượt qua 100%)*
 
-### Bước 3: Chạy Bộ Đo Đánh Giá Chất Lượng Tri Thức & Câu Hỏi Bẫy (Eval Harness)
+### Bước 3: Nạp Tri Thức Thử Nghiệm (Ingestion Dry-Run & Live)
 ```bash
-uv run python scripts/eval_harness.py
-```
-*(Đo lường tự động: Intent Accuracy 100%, L2 Groundedness Faithfulness 100%, và Trap Question Refusal Rate 100%)*
+# Chạy dry-run kiểm tra định dạng JSONL và bộ lọc hệ thống
+python scripts/ingest_knowledge_base.py \
+    --backend vertex_ai_search \
+    --source-dir data/knowledge_base/ \
+    --dry-run
 
-### Bước 4: Chạy Benchmark Redis Vector Search & Semantic Cache
-```bash
-uv run python scripts/benchmark_semantic_cache.py
-```
-*(Đo lường trên 1.000 entry vector: xem số liệu benchmark chi tiết tại [Mục 2.A](#a-redis-vector-semantic-cache-semantic_cachepy) — nhanh gấp 50x–100x+ so với LLM)*
-
-### Bước 5: Chạy Tải Giả Lập CCU (Locust Benchmark)
-```bash
-uv run locust -f scripts/load_test/locustfile.py --headless -u 100 -r 10 -t 1m --host http://localhost:8080
-```
-
-### Bước 6: Chạy Tương Tác Cục Bộ (CLI Mode)
-```bash
-uv run python main.py --mode cli
+# Chạy nạp thật lên Cloud Storage và Vertex AI Search
+python scripts/ingest_knowledge_base.py \
+    --backend vertex_ai_search \
+    --project-id="YOUR_PROJECT_ID" \
+    --gcs-bucket="YOUR_CORPUS_BUCKET" \
+    --data-store-id="it-helpdesk-kb-datastore" \
+    --source-dir data/knowledge_base/
 ```
 
-### Bước 7: Khởi Chạy Web Server (FastAPI + ADK Web UI)
+### Bước 4: Chạy Đánh Giá Chất Lượng & Benchmark (Eval Harness)
+```bash
+# Chạy đánh giá trên InMemory store (nhanh, offline)
+python scripts/eval_harness.py --store in_memory
+
+# Chạy đánh giá trên Vertex AI Search thật
+python scripts/eval_harness.py --store vertex_ai_search
+```
+
+### Bước 5: Khởi Chạy Web Server (FastAPI + ADK Web UI)
 ```bash
 uv run python main.py --mode serve --port 8080
 ```
@@ -234,38 +202,34 @@ uv run python main.py --mode serve --port 8080
 
 ---
 
-## ☁️ 8. Triển Khai Lên Google Cloud Run (Production)
+## ☁️ 7. Triển Khai Lên Google Cloud (Terraform & Cloud Run)
 
-### Bước 1: Khởi Tạo Hạ Tầng Tự Động (Terraform)
-Thư mục `deployment/terraform` đã cấu hình sẵn:
-- Service Account với nguyên tắc đặc quyền tối thiểu (Least Privilege).
-- Secret Manager, Artifact Registry, BigQuery Dataset, Cloud Run v2 Service.
-- Terraform Check blocks: `check "production_edge_security"` (bảo vệ Cloud Armor WAF) & `check "production_model_sla"` (bảo đảm SLA model GA).
-- Lifecycle `ignore_changes = [template[0].containers[0].image]` chống drift cấu hình khi CI/CD cập nhật image mới.
+### Khởi Tạo Hạ Tầng Tự Động (Terraform)
+Thư mục `deployment/terraform` bao gồm:
+- Module `vertex_ai_search.tf`: Bật `discoveryengine.googleapis.com`, tạo GCS Corpus Bucket có versioning & UBLA, Data Store với `acl_enabled = false` (bất biến), Search Engine, và cấp quyền tối thiểu `roles/discoveryengine.viewer`.
+- Validation biến `region` bắt buộc (không default), kiểm soát Data Residency tuân thủ Nghị định 13/2023/NĐ-CP.
+- Cloud Audit Logging cho dữ liệu tìm kiếm tri thức.
 
 ```bash
 cd deployment/terraform
 terraform init
 terraform plan \
   -var="project_id=YOUR_PROJECT_ID" \
+  -var="region=asia-southeast1" \
   -var="sso_client_id=YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com" \
   -var="allowed_domains=company.com"
 
 terraform apply -auto-approve \
   -var="project_id=YOUR_PROJECT_ID" \
+  -var="region=asia-southeast1" \
   -var="sso_client_id=YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com" \
   -var="allowed_domains=company.com"
 cd ../..
 ```
 
-### Bước 2: Build Container & Triển Khai Cloud Run
-```bash
-make docker-deploy PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1
-```
-
 ---
 
-## 📂 9. Cấu Trúc Mã Nguồn (Project Structure)
+## 📂 8. Cấu Trúc Mã Nguồn (Project Structure)
 
 ```
 it-helpdesk-agent/
@@ -273,67 +237,63 @@ it-helpdesk-agent/
 ├── Dockerfile                       # Container definition chuẩn production
 ├── Makefile                         # Lệnh tiện ích cho build, test, deploy
 ├── README.md                        # Tài liệu hướng dẫn toàn diện
+├── CONSTRAINTS.md                   # Ràng buộc kiến trúc & Invariants tuyệt đối
 ├── pyproject.toml                   # Định nghĩa dependencies và project metadata
-├── main.py                          # Entrypoint khởi chạy CLI hoặc Fast-API server
-├── test_local.py                    # Script chạy thử nghiệm tương tác runner
+├── main.py                          # Entrypoint khởi chạy CLI hoặc FastAPI server
 ├── config/                          # Cấu hình hệ thống, RBAC & chunking đa tầng
-│   └── systems.yaml                 # Định nghĩa ERP/HRM/CRM, user role mappings, domain keywords & DocAI
+│   └── systems.yaml                 # Định nghĩa ERP/HRM/CRM, role mappings & domain keywords
+├── docs/                            # Tài liệu kiến trúc, ADRs và Specs
+│   ├── adr/                         # Architecture Decision Records (0001 -> 0004)
+│   └── specs/                       # Đặc tả kỹ thuật các Epics (0 -> 6)
 ├── scripts/
-│   ├── benchmark_semantic_cache.py  # Benchmark Redis Candidate Scan vs In-Memory trên 1.000 entry vector pool
-│   ├── eval_harness.py              # Eval benchmark đo Groundedness & Trap Refusal
-│   ├── ingest_knowledge_base.py     # CLI Driver nạp dữ liệu CDC + BigQuery STORING vector
+│   ├── eval_harness.py              # Eval benchmark đa backend (Precision@k, Recall@k, MRR)
+│   ├── ingest_knowledge_base.py     # Unified CLI Ingest nạp tri thức lên VAIS/BQ
 │   ├── ingest/                      # Package module hóa xử lý dữ liệu nạp
-│   │   ├── __init__.py              # Entrypoint package ingest
 │   │   ├── parsers.py               # DocumentParser (MD, TXT, DOCX, DocAI PDF, JSONL)
 │   │   ├── chunkers.py              # Tiered & semantic chunking strategies
-│   │   ├── embedders.py             # Dense Vector Embedding generation
-│   │   └── loaders.py               # BigQuery Table schema, Indexing & MERGE Upsert
+│   │   ├── jsonl_builder.py         # JSONL builder chuẩn hóa structData cho Discovery Engine
+│   │   ├── gcs_uploader.py          # Upload corpus lên GCS
+│   │   ├── vais_importer.py         # Import Documents bất đồng bộ (FULL reconciliation)
+│   │   └── loaders.py               # BigQuery Table schema & DLQ error handler
 │   └── load_test/                   # Bộ kiểm thử tải và mô phỏng CCU (Locust)
-│       ├── locustfile.py            # Kịch bản tải phân tầng L1/L2/L3
-│       └── eval_set.csv             # Bộ câu hỏi kiểm thử tải
 ├── deployment/
 │   └── terraform/                   # Infrastructure-as-Code cho GCP
-│       ├── main.tf                  # Định nghĩa Cloud Run, BigQuery, IAM, Secrets & Check blocks
-│       └── variables.tf             # Biến cấu hình Terraform (GA default models & Cloud Armor)
+│       ├── main.tf                  # Cloud Run, IAM, Secrets & Check blocks
+│       ├── vertex_ai_search.tf      # Discovery Engine Data Store, Engine & GCS Bucket
+│       └── variables.tf             # Biến cấu hình Terraform (Region validation bắt buộc)
 ├── it_helpdesk_agent/
-│   ├── agent.py                     # Cấu hình Multi-Agent 3 cấp bậc (L1, L2, L3) + Latency tracking
-│   ├── fast_api_app.py              # Ứng dụng FastAPI, Middleware và Cache endpoints (Tắt docs trên Prod)
+│   ├── agent.py                     # Multi-Agent 3 cấp bậc (L1, L2, L3) + In-Process Tools
+│   ├── fast_api_app.py              # Ứng dụng FastAPI, Middleware và Cache endpoints
 │   ├── app_utils/
-│   │   ├── env.py                   # Quản lý nạp biến môi trường, Secret Manager & Model Selection SLA
-│   │   ├── embedding_utils.py       # Embedding abstraction (Vertex AI + Fail-Closed)
+│   │   ├── env.py                   # Quản lý nạp biến môi trường & Secret Manager
 │   │   ├── rate_limiter.py          # Token-hash & IP Sliding Window Limiter + Soft Warning
-│   │   ├── semantic_cache.py        # InMemory & Redis Vector Semantic Cache (Candidate Scan, Multi-tenant)
-│   │   ├── sso_auth.py              # Xác thực OIDC JWKS, Role Resolution, RBAC ContextVar & Memoization
-│   │   ├── system_config.py         # Dynamic loader cho systems.yaml & Domain Keyword Patterns
+│   │   ├── semantic_cache.py        # RBAC-Aware Redis & InMemory Vector Semantic Cache
+│   │   ├── sso_auth.py              # Xác thực OIDC JWKS, Role Resolution, RBAC ContextVar
+│   │   ├── system_config.py         # Dynamic loader cho systems.yaml & Domain Keywords
 │   │   └── telemetry.py             # OpenTelemetry tracking, Fail-Closed Privacy & PII redaction
 │   └── tools/
 │       ├── compliance_tool.py       # Công cụ phân tích SLA & hợp đồng IT (RBAC + Disclaimer)
 │       ├── log_analyzer.py          # Công cụ phân tích log RCA (RBAC + Confidence Level)
-│       ├── mcp_config.py            # Cấu hình Toolset Enterprise RAG MCP
-│       ├── ticketing_tool.py        # Quản lý Ticket (Firestore limit + bounded LRU cache + IDOR guard)
-│       └── enterprise_rag_mcp/      # Máy chủ Model Context Protocol (MCP) nội bộ
-│           ├── knowledge_store.py   # BaseKnowledgeStore (InMemory + BigQuery Vector Search)
-│           ├── main.py              # Server MCP FastMCP
-│           └── rag_models.py        # Schemas dữ liệu RAG
+│       ├── ticketing_tool.py        # Quản lý Ticket (Firestore limit + bounded LRU cache)
+│       ├── enterprise_rag/          # Bộ công cụ RAG In-Process
+│       │   ├── rag_tools.py         # search_enterprise_knowledge, get_system_manual, draft_email
+│       │   ├── filter_builder.py    # build_system_filter chống injection với whitelist
+│       │   └── vertex_search_store.py # VertexAiSearchKnowledgeStore adapter
+│       └── enterprise_rag_mcp/      # RAG Data Models & Core Stores
+│           ├── knowledge_store.py   # BaseKnowledgeStore, InMemory & BigQuery Stores
+│           └── rag_models.py        # Schemas dữ liệu RAG (KnowledgeArticle, SearchResult)
 └── tests/
-    ├── test_redis_backends.py       # Test Redis cluster rate limiter & semantic cache
-    └── unit/                        # Bộ kiểm thử tự động (157 test cases)
-        ├── test_agent_hierarchy.py  # Test cấu trúc phân cấp agent và model
-        ├── test_compliance_tool.py  # Test trích xuất SLA 2 chiều & RBAC
-        ├── test_container_packaging.py # Test Dockerfile & Fail-closed container env
-        ├── test_enterprise_rag.py   # Test MCP tra cứu tri thức & domain isolation
-        ├── test_env.py              # Test nạp secret & env
-        ├── test_ingestion_pipeline.py # Test chunking pipeline, Document AI & CDC dedup
-        ├── test_knowledge_store_adapters.py # Test Adapter Pattern & BigQuery Store
-        ├── test_log_analyzer.py     # Test nhận diện lỗi OOM, DB, Disk, Null & RBAC
-        ├── test_production_guardrails.py # Test Fail-closed cache, L3 disclaimer, Circuit breaker, SLA
-        ├── test_rate_limiter.py     # Test rate limiter sliding window, token hash & soft warnings
-        ├── test_rbac_provisioning.py # Test cấp role 4 tầng ưu tiên & SHA-256 process invariance
-        ├── test_security_adversarial.py # Test IDOR, SQLi injection, Cache isolation
-        ├── test_semantic_cache.py   # Test Cosine Similarity, Cache Hit/Miss, TTL, LRU, Public FAQ
-        ├── test_sso_auth.py         # Test OIDC JWKS, Fail-closed domain, Role Resolution, Middleware
-        ├── test_system_config.py    # Test dynamic systems.yaml loading, role mappings & fail-closed
-        ├── test_telemetry.py        # Test Telemetry privacy, PII masking & regex system classification
-        └── test_ticketing_tool.py   # Test tạo, cập nhật, chuyển tiếp ticket & bounded LRU cache
+    ├── integration/                 # Kiểm thử tích hợp RBAC end-to-end
+    │   └── test_rbac_end_to_end.py
+    └── unit/                        # Bộ kiểm thử đơn vị tự động (274 test cases)
+        ├── test_epic5_agent_layer.py
+        ├── test_filter_builder_fuzz.py
+        ├── test_ingest_cli.py
+        ├── test_jsonl_builder.py
+        ├── test_knowledge_store_factory.py
+        ├── test_schema_parity.py
+        ├── test_terraform_hcl_syntax.py
+        ├── test_vais_importer.py
+        ├── test_vertex_search_store.py
+        └── ...
 ```
-
